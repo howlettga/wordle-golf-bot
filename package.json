@@ -1,0 +1,28 @@
+{
+  "name": "score-my-wordle-bot",
+  "version": "1.0.0",
+  "description": "A telegram bot that interprets and scores Wordle games to play Wordle Golf",
+  "main": "bot.js",
+  "scripts": {
+    "start": "npx tsc && node bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "login": "gcloud auth application-default login"
+  },
+  "author": "howlettga",
+  "license": "ISC",
+  "dependencies": {
+    "@google-cloud/local-auth": "^2.1.0",
+    "date-fns": "^3.6.0",
+    "dotenv": "^16.4.5",
+    "google-spreadsheet": "^4.1.2",
+    "googleapis": "^105.0.0",
+    "grammy": "^1.25.0",
+    "node-fetch": "^2.7.0",
+    "node-schedule": "^2.1.1"
+  },
+  "devDependencies": {
+    "@types/node-fetch": "^2.6.11",
+    "@types/node-schedule": "^2.1.7",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,300 @@
+import { Bot, CommandContext, Context } from "grammy";
+import fetch from 'node-fetch';
+import { format } from "date-fns";
+import { GoogleSheet } from "./google-sheets";
+import { User } from "grammy/types";
+import { scheduleJob } from "node-schedule";
+import 'dotenv/config';
+
+const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN as string);
+const sheet = new GoogleSheet(process.env.GOOGLE_SHEET_ID as string);
+
+interface WordleScore {
+  initialWord: string;
+  gameId: {
+    label: string;
+    value: number;
+  };
+  score: {
+    label: string;
+    value: number;
+  };
+  lines: string[];
+}
+
+const parseWordleScore = (message: string, user: User) => {
+  const lines = message.split("\n");
+  const title = lines[0].split(" ");
+  
+  return {
+    username: user.username!,
+    initialWord: title[0],
+    gameId: {
+      label: title[1],
+      value: parseInt(title[1].split(",").join("")),
+    },
+    score: {
+      label: title[2],
+      value: parseInt(title[2].split('/')[0]),
+    },
+    lines: lines,
+  };
+}
+
+const isTodaysWordle = async (wordle: WordleScore) => {
+  const today = format(new Date(), "yyyy-MM-dd");
+  const todaysWordle = await (await fetch(`https://www.nytimes.com/svc/wordle/v2/${today}.json`)).json();
+
+  return todaysWordle.days_since_launch === wordle.gameId.value;
+}
+
+const validateWordleScore = (wordle: WordleScore) => {
+  const scoring = wordle.score.label.split("/");
+  if (scoring.length !== 2 || scoring[1] !== '6' || parseInt(scoring[0]) < 1 || parseInt(scoring[0]) > 6) {
+    return false
+  }
+
+  if (wordle.lines.length !== wordle.score.value + 2) {
+    return false
+  }
+
+  if (wordle.lines[wordle.lines.length - 1] !== "🟩🟩🟩🟩🟩") {
+    return false
+  }
+
+  return true;
+}
+
+const initScheduledMessages = () => {
+  const daily = scheduleJob('0 9 * * *', async function() {
+    const rounds = await sheet.getActiveRounds(false);
+    for (const round of rounds) {
+      await bot.api.sendMessage(round.title.split('|')[1], "One more day down! Don't forget to submit today's score.\nFeel free to use the /scorecard command to check the current standings.", { message_thread_id: round.threadId });
+    }
+  });
+  const complete = scheduleJob('0 11 * * *', async function() {
+    const rounds = await sheet.getActiveRounds(true);
+    for (const round of rounds) {
+      await bot.api.sendMessage(round.title.split('|')[1], "The round is complete! Lets see who won!", { message_thread_id: round.threadId });
+      await bot.api.sendMessage(round.title.split('|')[1], await getFinalTabulation(round.title), { message_thread_id: round.threadId });
+    }
+  })
+}
+
+const getReport = async (groupId: string) => {
+  try {
+    const round = await sheet.getScoringReport(groupId);
+
+    let replyString = "Current Round:\n-----\n";
+    replyString += `Started on ${format(round.startDate, 'M/d/yy')}\n${round.days} days completed`;
+    replyString += "\n-----\nScores:\n\n";
+    for (const player in round.scores) {
+      replyString += `${player}: ${round.scores[player].total}\n    ${round.scores[player].holes.join(" ")}\n`;
+    }
+    replyString += "-----\nScores may be adjusted for penalties on conclusion of the round.\nThanks for playing!";
+
+    return replyString;
+  } catch (err: any) {
+    if (err.message === "SHEET_NOT_FOUND") {
+      return "There is no active round right now.\nStart a new round with the /wordle command!";
+    } else {
+      console.log(err);
+      return "I'm having trouble retrieving the current scores. Maybe I need to be punished?";
+    }
+  }
+}
+
+const getFinalTabulation = async (groupId: string) => {
+  try {
+    const round = await sheet.tabulateFinalResults(groupId);
+    const getWinnerLines = () => {
+      if (round.tie) {
+        return `We have ${round.winners.length} winners: ${round.winners.join(", ")}!!\n\n🎉🎉CONGRATULATIONS🎉🎉\n🍾🍾🍾🍾🍾`
+      } else {
+        return `We have a winner: ${round.winners[0]}!!\n\n🎊🎊CONGRATULATIONS🎊🎊\n🍾🍾🍾🍾🍾`
+      }
+    }
+
+    const reply =
+`Round Results:
+-----
+${getWinnerLines()}
+With a score of ${round.winningScore} they are clearly the smartest!!
+-----
+This round was started on ${format(round.startDate, 'M/d/yy')}
+-----
+Here are the final scores:
+
+${round.scores.map(p => `${p[0]}: ${p[1].total}\n    ${p[1].holes.join(" ")}`).join("\n")}
+-----
+Thanks for playing! You can start a new round with the /wordle command!
+`;
+    return reply;
+  } catch (err: any) {
+    if (err.message === 'ROUND_NOT_FINISHED') {
+      return "The round hasn't finished yet. Wait till later!";
+    } else {
+      throw err;
+    }
+  }
+}
+
+const getGroupId = (ctx: any) => {
+  if (ctx.message?.chat.type === "group") {
+    return ctx.message.chat.title + "|" + ctx.message.chat.id;
+  } else if (ctx.message?.chat.type === "supergroup") {
+    if (ctx.message.reply_to_message?.forum_topic_created) {
+      return ctx.message.reply_to_message.forum_topic_created!.name + "|" + ctx.message.chat.id;
+    } else {
+      return ctx.message.chat.title + "|" + ctx.message.chat.id;
+    }
+  } else {
+    return ctx.message.chat.title + "|" + ctx.message.chat.id;
+  }
+}
+
+// start command
+bot.command("wordle", async (ctx) => {
+  const title = getGroupId(ctx);
+
+  try {
+    await sheet.newSheet(title, ctx.message?.chat.id, ctx.message?.message_thread_id);
+    ctx.reply("New round initiated! Scoring will open tomorrow!\n\nYou must submit a wordle score each day for the next nine days. The lowest score over this period wins!\nUse the /instructions command to request further information.\n\nAnd may the odds be ever in your favor!", { message_thread_id: ctx.message?.message_thread_id });
+  } catch (err: any) {
+    if (err.response.data.error.status === 'INVALID_ARGUMENT') {
+      ctx.reply("It looks like this round title has already been used :(\nEach round title must be unique.", { message_thread_id: ctx.message?.message_thread_id });
+    } else {
+      console.log(err);
+      ctx.reply("There was an issue creating your round :(\nI'm not sure why", { message_thread_id: ctx.message?.message_thread_id });
+    }
+  }
+});
+
+bot.command("help", ctx => {
+  ctx.reply("Get bent... I'm not helping you!\nalright, alright. just use the /instructions command to figure out how to play idot", {
+    reply_parameters: {
+      message_id: ctx.message!.message_id,
+    },
+    message_thread_id: ctx.message?.message_thread_id
+  });
+});
+
+bot.command("instructions", (ctx) => ctx.reply(
+`Welcome to Wordle Golf!
+The game the NYT can't be bothered to invest development resources into... So I am a bot to help you keep score!
+
+Use the /wordle command to start a new round. The round will begin the day after you use the /wordle command.
+Each new round consists of 9 days of scoring. The lowest score over the 9 days wins!
+Be warned, using the /wordle command to start a new round will reset your current round! Only the admin can recover from this.
+
+Each day, complete the Wordle and use the share button to submit your score to this chat thread. Only share your summary! No screenshots of the actual words used.
+
+At the end of the nine days, I'll let you know you is smart and who is not! You can use the /scorecard command to see the standings at any time.
+
+Scoring:
+- 1 point for each guess it took to get the word
+- 6.5 points if you do not finish
+- 7 points if you miss the day
+
+May the odds be ever in your favor!
+`, {
+  message_thread_id: ctx.message?.message_thread_id
+}));
+
+bot.command("scorecard", async (ctx) => {
+  const title = getGroupId(ctx);
+  const report = await getReport(title);
+  
+  ctx.reply(report, { message_thread_id: ctx.message?.message_thread_id });
+});
+
+bot.command("test", async (ctx) => {
+  await test(ctx);
+});
+
+// TODO: probably better to listen for specific words
+//bot.hears(/.*pizza.*/, ctx => {
+// checks all messages for wordle scores
+bot.hears(/Wordle.*/, async (ctx) => {
+// bot.on("message", async (ctx) => {
+  // console.log(ctx.message);
+  if (ctx.from?.username && ctx.message?.text) {
+    const title = getGroupId(ctx);
+    const wordle = parseWordleScore(ctx.message.text, ctx.from);
+    if (await isTodaysWordle(wordle)) {
+      if (validateWordleScore(wordle)) {
+        try {
+          await sheet.addScore(wordle.username, wordle.score.value, title);
+          // TODO bogey, par, etc
+          ctx.reply(`Thanks for submitting your wordle score @${ctx.from.username}.\nYou have been marked down for a score of ${wordle.score.value}`, { message_thread_id: ctx.message?.message_thread_id });
+        } catch (err: any) {
+          if (err.message === 'ROUND_NOT_FOUND') {
+            ctx.reply("What are you trying to play?? A round hasn't been initiated fool!\nStart a new round with /wordle to get playing Wordle Golf!", {
+              reply_parameters: {
+                message_id: ctx.message!.message_id,
+              },
+              message_thread_id: ctx.message?.message_thread_id
+            });
+          } else if (err.message === 'ROUND_OVER') {
+            // im not sure this can ever hit with the new archive and schedule logic. Maybe at 8am on the next day
+            ctx.reply("It appears the round has ended. Start a new round to continue playing Wordle Golf!", { message_thread_id: ctx.message?.message_thread_id });
+          } else if (err.message === 'ROUND_NOT_STARTED') {
+            ctx.reply("The round hasn't started yet dumbass. Wait till tomorrow!", {
+              reply_parameters: {
+                message_id: ctx.message!.message_id,
+              },
+              message_thread_id: ctx.message?.message_thread_id 
+            });
+           } else if (err.message === 'ALREADY_SCORED') {
+            ctx.reply("You have already submitted your score for today idiot. No need to resubmit!", {
+              reply_parameters: {
+                message_id: ctx.message!.message_id,
+              },
+              message_thread_id: ctx.message?.message_thread_id,
+            });
+          } else {
+            console.log(err);
+            ctx.reply("There was an issue submitting your score :(\nI'm not sure why", {
+              reply_parameters: {
+                message_id: ctx.message!.message_id,
+              },
+              message_thread_id: ctx.message?.message_thread_id 
+            });
+          }
+        }
+      } else {
+        ctx.reply(`🚨🚨🚨 CHEATER 🚨🚨🚨\nSomething is wrong with your wordle score @${ctx.from.username}`, { message_thread_id: ctx.message?.message_thread_id });
+      }
+    } else {
+      ctx.reply(`This is not today's score @${ctx.from.username}. Don't try to fool me!`, { message_thread_id: ctx.message?.message_thread_id });
+    }
+  } else {
+    ctx.reply(`I'm sorry, I don't know who you are. I'm not sure what you want me to do.`, { message_thread_id: ctx.message?.message_thread_id });
+    // easterEggs(ctx);
+  }
+});
+
+/*  Easter egg messages */
+bot.hears(/.*\bbad bot\b.*/i, async (ctx) => {
+  ctx.reply("You can spank me now 😈", {
+    reply_parameters: {
+      message_id: ctx.message!.message_id,
+    },
+    message_thread_id: ctx.message?.message_thread_id
+  });
+});
+
+bot.catch((err) => {
+  console.log(err);
+  const ctx = err.ctx;
+  ctx.reply("I'm sorry, there was an error :(\nI've been a bad bot", { message_thread_id: ctx.message?.message_thread_id });
+});
+
+// Start the bot.
+bot.start();
+initScheduledMessages();
+console.log('Running...');
+
+const test = async (ctx: CommandContext<Context>) => {
+
+}
