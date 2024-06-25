@@ -10,13 +10,10 @@ import 'dotenv/config';
 
 export class GoogleSheet {
   private static readonly SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
-  private static readonly TOKEN_PATH = path.join(process.cwd(), "credentials.json");
+  private static readonly TOKEN_PATH = path.join(process.cwd(), "token.json");
   private static readonly CREDENTIALS_PATH = path.join(process.cwd(), "credentials.json");
 
   private doc: GoogleSpreadsheet;
-
-  // private client;
-  // private sheetId: string;
 
   constructor(sheetId: string, auth: any) {
     this.doc = new GoogleSpreadsheet(sheetId, auth);
@@ -30,7 +27,7 @@ export class GoogleSheet {
     } else if (process.env.GOOGLE_AUTH_METHOD === 'oauth2') {
       return await this.authorize();
     } else {
-      throw new Error('Invalid GOOGLE_AUTH_METHOD');
+      throw new Error('INVALID_GOOGLE_AUTH_METHOD');
     }
   }
 
@@ -319,7 +316,7 @@ export class GoogleSheet {
    * Load or request or authorization to call APIs.
    *
    */
- private static authorize = async (): Promise<any> => {
+  private static authorize = async (): Promise<any> => {
     let client: any = await this.loadSavedCredentialsIfExist();
     if (client) {
       return client;
