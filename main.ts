@@ -1,6 +1,8 @@
 import { WordleBot } from "./bot";
 import { GoogleSheet } from "./google-sheets";
 
+console.log("Wordle bot booting...");
+
 GoogleSheet.initAuth().then((auth) => {
   const sheet = new GoogleSheet(process.env.GOOGLE_SHEET_ID as string, auth);
   const bot = new WordleBot(sheet);
