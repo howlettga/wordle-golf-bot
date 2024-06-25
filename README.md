@@ -21,6 +21,22 @@ GOOGLE_AUTH_METHOD=
 GOOGLE_SHEET_ID=
 ```
 
+### Telegram Bot
+
+1. Register a new bot with the @BotFather.
+
+2. Save the token.
+
+### Google Sheet
+
+You need a Google Sheet Document configured to use as the scoring database. Each new round will be added as a new sheet on this document.
+
+1. Create a new Worksheet Document.
+
+2. Rename the initial sheet to `init`. Google Sheets requires one sheet to exist in every document; Wordle Bot will ignore sheets named `init`, so this can safely be used.
+
+3. Save the id.
+
 ### Google Sheets Authentication
 
 Authentication methods supported are `adc` (application default credentials) or `oauth2`.
