@@ -12,6 +12,7 @@ GoogleSheet.initAuth().then((auth) => {
 }).catch((err) => {
   if (err.message === "INVALID_GOOGLE_AUTH_METHOD") {
     console.error("Invalid Google Auth Method Please set the required GOOGLE_AUTH_METHOD environment variable. Exiting...");
+    console.error(process.env);
     process.exit(1);
   } else {
     console.error(err);
