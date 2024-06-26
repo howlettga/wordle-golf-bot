@@ -1,10 +1,14 @@
-import { Bot } from "grammy";
+import { Bot, type Context, session } from "grammy";
+import { type Conversation, type ConversationFlavor, conversations, createConversation } from "@grammyjs/conversations";
+import { User } from "grammy/types";
 import fetch from 'node-fetch';
 import { format } from "date-fns";
-import { User } from "grammy/types";
 import { scheduleJob } from "node-schedule";
 import { GoogleSheet } from "./google-sheets";
 import 'dotenv/config';
+
+type MyContext = Context & ConversationFlavor;
+type MyConversation = Conversation<MyContext>;
 
 interface WordleScore {
   initialWord: string;
@@ -20,15 +24,20 @@ interface WordleScore {
 }
 
 export class WordleBot {
-  private bot: Bot;
+  private bot: Bot<MyContext>;
   private sheet: GoogleSheet;
 
   constructor(sheet: GoogleSheet) {
-    this.bot = new Bot(process.env.TELEGRAM_BOT_TOKEN as string);
+    this.bot = new Bot<MyContext>(process.env.TELEGRAM_BOT_TOKEN as string);
     this.sheet = sheet;
   }
 
   start() {
+    this.bot.use(session({ initial: () => ({}) }));
+    this.bot.use(conversations());
+
+    this.bot.use(createConversation(this.newRound.bind(this), 'new-round'));
+
     this.registerWordle();
     this.registerScore();
     this.registerScorecard();
@@ -46,22 +55,63 @@ export class WordleBot {
     this.initScheduledMessages();
   }
 
+  private async newRound(conversation: MyConversation, ctx: MyContext) {
+    const initiator = ctx.from;
+    await ctx.reply(`@${initiator?.username} has requested to start a new round of Wordle Golf. Would someone confirm? (yes/no)\n\n🚨This will reset the existing round!`, { message_thread_id: ctx.message?.message_thread_id });
+    const { message } = await conversation.wait();
+    const respondor = message?.from;
+
+    if (!initiator || !respondor) {
+      await ctx.reply("I'm sorry, I can't figure out who's talking. Please help pay for my education", { message_thread_id: ctx.message?.message_thread_id });
+    } else if (message.text?.toLowerCase() === 'no' || message.text?.toLowerCase() === 'n') {
+      await ctx.reply("Well that's no fun! I guess we know who the loser of the group is 😝", {
+        reply_parameters: {
+          message_id: message.message_id,
+        },
+        message_thread_id: ctx.message?.message_thread_id
+      });
+    } else if (message.text?.match(/.*bad bot.*/i)) {
+      await ctx.reply("You're right, I'm very naughty 👺", {
+        reply_parameters: {
+          message_id: message.message_id,
+        },
+        message_thread_id: ctx.message?.message_thread_id
+      });
+    } else if (respondor.id === initiator.id) {
+      await ctx.reply("You can't start a new round with yourself silly! Make some friends and then we'll talk...", {
+        reply_parameters: {
+          message_id: message.message_id,
+        },
+        message_thread_id: ctx.message?.message_thread_id,
+      });
+    } else if (message.text?.toLowerCase() === 'yes' || message?.text?.toLowerCase() === 'y') {
+      console.log(this);
+      const title = this.getGroupId(ctx);
+      await this.sheet.newSheet(title, ctx.message?.chat.id, ctx.message?.message_thread_id);
+      ctx.reply("New round initiated! Scoring will open tomorrow!\n\nYou must submit a wordle score each day for the next nine days. The lowest score over this period wins!\nUse the /instructions command to request further information.\n\nAnd may the odds be ever in your favor!", { message_thread_id: ctx.message?.message_thread_id });
+    } else if (message.text?.match(/^yes!*\z/i)) {
+      ctx.reply("Now that's the spirit! With pizzazz like that, I just give you some free points this round 😎", {
+        reply_parameters: {
+          message_id: message.message_id,
+        },
+        message_thread_id: ctx.message?.message_thread_id
+      });
+      const title = this.getGroupId(ctx);
+      await this.sheet.newSheet(title, ctx.message?.chat.id, ctx.message?.message_thread_id);
+      ctx.reply("New round initiated! Scoring will open tomorrow!\n\nYou must submit a wordle score each day for the next nine days. The lowest score over this period wins!\nUse the /instructions command to request further information.\n\nAnd may the odds be ever in your favor!", { message_thread_id: ctx.message?.message_thread_id });
+    } else {
+      await ctx.reply("Hmmm, I don't really know what's going on! Now I'm not going to start a new round 🫣", {
+        reply_parameters: {
+          message_id: message.message_id,
+        },
+        message_thread_id: ctx.message?.message_thread_id
+      });
+    }
+  }
 
   private registerWordle() {
     this.bot.command("wordle", async (ctx) => {
-      const title = this.getGroupId(ctx);
-    
-      try {
-        await this.sheet.newSheet(title, ctx.message?.chat.id, ctx.message?.message_thread_id);
-        ctx.reply("New round initiated! Scoring will open tomorrow!\n\nYou must submit a wordle score each day for the next nine days. The lowest score over this period wins!\nUse the /instructions command to request further information.\n\nAnd may the odds be ever in your favor!", { message_thread_id: ctx.message?.message_thread_id });
-      } catch (err: any) {
-        if (err.response.data.error.status === 'INVALID_ARGUMENT') {
-          ctx.reply("It looks like this round title has already been used :(\nEach round title must be unique.", { message_thread_id: ctx.message?.message_thread_id });
-        } else {
-          console.log(err);
-          ctx.reply("There was an issue creating your round :(\nI'm not sure why", { message_thread_id: ctx.message?.message_thread_id });
-        }
-      }
+      await ctx.conversation.enter("new-round");
     });
   }
 
@@ -79,11 +129,10 @@ export class WordleBot {
   private registerInstructions() {
     this.bot.command("instructions", (ctx) => ctx.reply(
 `Welcome to Wordle Golf!
-The game the NYT can't be bothered to invest development resources into... So I am a bot to help you keep score!
+The game the NYT can't be bothered to invest development resources into, so... I am a bot to help you keep score!
 
 Use the /wordle command to start a new round. The round will begin the day after you use the /wordle command.
 Each new round consists of 9 days of scoring. The lowest score over the 9 days wins!
-Be warned, using the /wordle command to start a new round will reset your current round! Only the admin can recover from this.
 
 Each day, complete the Wordle and use the share button to submit your score to this chat thread. Only share your summary! No screenshots of the actual words used.
 
@@ -110,7 +159,7 @@ May the odds be ever in your favor!
   }
 
   private registerScore() {
-    this.bot.hears(/Wordle.*/, async (ctx) => {
+    this.bot.hears(/^Wordle.*/, async (ctx) => {
       // console.log(ctx.message);
       if (ctx.from?.username && ctx.message?.text) {
         const title = this.getGroupId(ctx);
@@ -174,7 +223,18 @@ May the odds be ever in your favor!
         reply_parameters: {
           message_id: ctx.message!.message_id,
         },
-        message_thread_id: ctx.message?.message_thread_id
+        message_thread_id: ctx.message?.message_thread_id,
+      });
+    });
+    this.bot.hears(/.*\bcheater\b.*/i, async (ctx) => {
+      ctx.reply("🚨🚨🚨 CHEATER ALERT 🚨🚨🚨 CHEATER ALERT 🚨🚨🚨 CHEATER ALERT 🚨🚨🚨\n\nLooks like we have a cheater!! Get em!!!!!!", { message_thread_id: ctx.message?.message_thread_id });
+    });
+    this.bot.hears(/.*\blooks like\b.*/i, async (ctx) => {
+      ctx.reply("It looks like a fucking Wordle score! Geeeeeeesh 😂", {
+        reply_parameters: {
+          message_id: ctx.message!.message_id,
+        },
+        message_thread_id: ctx.message?.message_thread_id,
       });
     });
   }
