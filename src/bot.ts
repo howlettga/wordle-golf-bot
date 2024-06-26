@@ -1,11 +1,11 @@
 import { Bot, type Context, session } from "grammy";
+import { type Conversation, type ConversationFlavor, conversations, createConversation } from "@grammyjs/conversations";
+import { User } from "grammy/types";
 import fetch from 'node-fetch';
 import { format } from "date-fns";
-import { User } from "grammy/types";
 import { scheduleJob } from "node-schedule";
 import { GoogleSheet } from "./google-sheets";
 import 'dotenv/config';
-import { type Conversation, type ConversationFlavor, conversations, createConversation } from "@grammyjs/conversations";
 
 type MyContext = Context & ConversationFlavor;
 type MyConversation = Conversation<MyContext>;
