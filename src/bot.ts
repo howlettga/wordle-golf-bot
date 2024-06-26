@@ -129,7 +129,7 @@ export class WordleBot {
   private registerInstructions() {
     this.bot.command("instructions", (ctx) => ctx.reply(
 `Welcome to Wordle Golf!
-The game the NYT can't be bothered to invest development resources into... So I am a bot to help you keep score!
+The game the NYT can't be bothered to invest development resources into, so... I am a bot to help you keep score!
 
 Use the /wordle command to start a new round. The round will begin the day after you use the /wordle command.
 Each new round consists of 9 days of scoring. The lowest score over the 9 days wins!
@@ -223,7 +223,18 @@ May the odds be ever in your favor!
         reply_parameters: {
           message_id: ctx.message!.message_id,
         },
-        message_thread_id: ctx.message?.message_thread_id
+        message_thread_id: ctx.message?.message_thread_id,
+      });
+    });
+    this.bot.hears(/.*\bcheater\b.*/i, async (ctx) => {
+      ctx.reply("🚨🚨🚨 CHEATER ALERT 🚨🚨🚨 CHEATER ALERT 🚨🚨🚨 CHEATER ALERT 🚨🚨🚨\n\nLooks like we have a cheater!! Get em!!!!!!", { message_thread_id: ctx.message?.message_thread_id });
+    });
+    this.bot.hears(/.*\blooks like\b.*/i, async (ctx) => {
+      ctx.reply("It looks like a fucking Wordle score! Geeeeeeesh 😂", {
+        reply_parameters: {
+          message_id: ctx.message!.message_id,
+        },
+        message_thread_id: ctx.message?.message_thread_id,
       });
     });
   }
