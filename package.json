@@ -4,7 +4,9 @@
   "description": "A telegram bot that interprets and scores Wordle games to play Wordle Golf",
   "main": "main.js",
   "scripts": {
-    "start": "npx tsc && node main.js",
+    "start": "node main.js",
+    "build": "npx tsc",
+    "gcp-build": "npm tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
     "login": "gcloud auth application-default login"
   },
