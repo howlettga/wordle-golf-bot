@@ -2,7 +2,6 @@
   "name": "wordle-golf-bot",
   "version": "1.0.0",
   "description": "A telegram bot that interprets and scores Wordle games to play Wordle Golf",
-  "main": "main.js",
   "scripts": {
     "start": "node main.js",
     "build": "npx tsc",
