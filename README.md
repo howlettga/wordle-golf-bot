@@ -57,6 +57,18 @@ Must add a `credentials.json` file.
 npm install
 ```
 
+## Develop
+
+```sh
+npm run dev
+```
+
+## Build
+
+```sh
+npm run build
+```
+
 ## Run
 
 ```sh
