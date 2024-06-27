@@ -1,6 +1,6 @@
 {
   "name": "wordle-golf-bot",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A telegram bot that interprets and scores Wordle games to play Wordle Golf",
   "scripts": {
     "clean": "rm -rf dist",

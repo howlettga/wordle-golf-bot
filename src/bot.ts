@@ -161,13 +161,13 @@ May the odds be ever in your favor!
   private registerScore() {
     this.bot.hears(/^Wordle.*/, async (ctx) => {
       // console.log(ctx.message);
-      if (ctx.from?.username && ctx.message?.text) {
+      if (ctx.from && ctx.message?.text) {
         const title = this.getGroupId(ctx);
         const wordle = this.parseWordleScore(ctx.message.text, ctx.from);
         if (await this.isTodaysWordle(wordle)) {
           if (this.validateWordleScore(wordle)) {
             try {
-              await this.sheet.addScore(wordle.username, wordle.score.value, title);
+              await this.sheet.addScore(wordle.playerId, wordle.score.value, title);
               // TODO bogey, par, etc
               ctx.reply(`Thanks for submitting your wordle score @${ctx.from.username}.\nYou have been marked down for a score of ${wordle.score.value}`, { message_thread_id: ctx.message?.message_thread_id });
             } catch (err: any) {
@@ -261,9 +261,12 @@ May the odds be ever in your favor!
   private parseWordleScore(message: string, user: User) {
     const lines = message.split("\n");
     const title = lines[0].split(" ");
-    
+
     return {
-      username: user.username!,
+      playerId: this.getPlayerId(user),
+      userId: user.id,
+      username: user.username,
+      userFirstName: user.first_name,
       initialWord: title[0],
       gameId: {
         label: title[1],
@@ -309,7 +312,8 @@ May the odds be ever in your favor!
       replyString += `Started on ${format(round.startDate, 'M/d/yy')}\n${round.days} days completed`;
       replyString += "\n-----\nScores:\n\n";
       for (const player in round.scores) {
-        replyString += `${player}: ${round.scores[player].total}\n    ${round.scores[player].holes.join(" ")}\n`;
+        const playerInfo = this.parsePlayerId(player);
+        replyString += `${playerInfo.firstName}: ${round.scores[player].total}\n    ${round.scores[player].holes.join(" ")}\n`;
       }
       replyString += "-----\nScores may be adjusted for penalties on conclusion of the round.\nThanks for playing!";
   
@@ -329,9 +333,9 @@ May the odds be ever in your favor!
       const round = await this.sheet.tabulateFinalResults(groupId);
       const getWinnerLines = () => {
         if (round.tie) {
-          return `We have ${round.winners.length} winners: ${round.winners.join(", ")}!!\n\n🎉🎉CONGRATULATIONS🎉🎉\n🍾🍾🍾🍾🍾`
+          return `We have ${round.winners.length} winners: ${round.winners.map(p => this.parsePlayerId(p).firstName).join(", ")}!!\n\n🎉🎉CONGRATULATIONS🎉🎉\n🍾🍾🍾🍾🍾`
         } else {
-          return `We have a winner: ${round.winners[0]}!!\n\n🎊🎊CONGRATULATIONS🎊🎊\n🍾🍾🍾🍾🍾`
+          return `We have a winner: ${this.parsePlayerId(round.winners[0]).firstName}!!\n\n🎊🎊CONGRATULATIONS🎊🎊\n🍾🍾🍾🍾🍾`
         }
       }
   
@@ -345,7 +349,7 @@ This round was started on ${format(round.startDate, 'M/d/yy')}
 -----
 Here are the final scores:
 
-${round.scores.map(p => `${p[0]}: ${p[1].total}\n    ${p[1].holes.join(" ")}`).join("\n")}
+${round.scores.map(p => `${this.parsePlayerId(p[0]).firstName}: ${p[1].total}\n    ${p[1].holes.join(" ")}`).join("\n")}
 -----
 Thanks for playing! You can start a new round with the /wordle command!
 `;
@@ -371,6 +375,15 @@ Thanks for playing! You can start a new round with the /wordle command!
     } else {
       return ctx.message.chat.title + "|" + ctx.message.chat.id;
     }
+  }
+
+  private getPlayerId(user: User) {
+    return user.id + "|" + user.username + "|" + user.first_name;
+  }
+  private parsePlayerId(playerId: string) {
+    const [userId, username, ...firstNameArr] = playerId.split("|");
+    const firstName = firstNameArr.join("|");
+    return { userId, username, firstName };
   }
 
 }
