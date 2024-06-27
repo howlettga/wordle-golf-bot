@@ -83,15 +83,15 @@ export class GoogleSheet {
     await newSheet.saveUpdatedCells();
   }
 
-  public addScore = async (player: string, score: number, sheetTitle: string) => {
+  public addScore = async (playerId: string, score: number, sheetTitle: string) => {
     await this.doc.loadInfo();
     if (!await this.checkRoundExists(sheetTitle)) {
       throw new Error("ROUND_NOT_FOUND");
     }
     const sheet = this.doc.sheetsByTitle[sheetTitle];
     await sheet.loadHeaderRow();
-    if (!sheet.headerValues.includes(player)) {
-      sheet.headerValues.push(player);
+    if (!sheet.headerValues.includes(playerId)) {
+      sheet.headerValues.push(playerId);
       await sheet.setHeaderRow(sheet.headerValues);
     }
 
@@ -114,11 +114,11 @@ export class GoogleSheet {
 
     const rows = await sheet.getRows();
 
-    if (rows[day].get(player)) {
+    if (rows[day].get(playerId)) {
       throw new Error("ALREADY_SCORED");
     }
 
-    rows[day].set(player, score);
+    rows[day].set(playerId, score);
     await rows[day].save();
   }
 
