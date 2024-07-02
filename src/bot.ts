@@ -50,16 +50,6 @@ export class WordleBot {
     this.registerInstructions();
     this.registerEasterEggs();
 
-    this.bot.command("tag", ctx => {
-      ctx.reply(`[${ctx.from?.first_name}](tg://user?id=${ctx.from?.id}) hey you`,
-        { message_thread_id: ctx.message?.message_thread_id,
-          parse_mode: "MarkdownV2",
-        },
-      )
-      // this.replyAll(`[${ctx.from?.first_name}](tg://user?id=${ctx.from?.id}) hey you!`, ctx);
-    });
-    
-
     this.bot.catch((err) => {
       console.log(err);
       const ctx = err.ctx;
