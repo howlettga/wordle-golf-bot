@@ -86,7 +86,7 @@ export class GoogleSheet {
   public addScore = async (playerId: string, score: number, sheetTitle: string) => {
     await this.doc.loadInfo();
     if (!await this.checkRoundExists(sheetTitle)) {
-      throw new Error("ROUND_NOT_FOUND");
+      throw new ScoringError(ScoringErrorType.ROUND_NOT_FOUND, "");
     }
     const sheet = this.doc.sheetsByTitle[sheetTitle];
     await sheet.loadHeaderRow();
@@ -105,17 +105,17 @@ export class GoogleSheet {
     );
 
     if (day < 0) {
-      throw new Error("ROUND_NOT_STARTED");
+      throw new ScoringError(ScoringErrorType.ROUND_NOT_STARTED, "");
     }
 
     if (day > 9) {
-      throw new Error("ROUND_OVER");
+      throw new ScoringError(ScoringErrorType.ROUND_OVER, "");
     }
 
     const rows = await sheet.getRows();
 
     if (rows[day].get(playerId)) {
-      throw new Error("ALREADY_SCORED");
+      throw new ScoringError(ScoringErrorType.ALREADY_SCORED, "");
     }
 
     rows[day].set(playerId, score);
@@ -154,9 +154,23 @@ export class GoogleSheet {
       let playerTotal = 0;
       round.scores[player] = {total: 0, holes: []};
       round.scores[player].holes = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(day => {
-        // if (rows[day].get(player) === 'x')   // i believe x score means dnf and should be 6.5 but i've never seen the formatting
-        playerTotal += parseInt(rows[day].get(player) || '0');
-        return rows[day].get(player) || (day < today ? 7 : ' ');
+        const recordedValue = rows[day].get(player);
+        let roundValue; let visualValue;
+        if (recordedValue) {
+          visualValue = recordedValue;
+          roundValue = parseFloat(recordedValue);
+          if (recordedValue === '6.5') {
+            visualValue = 'X';
+          }
+        } else if (day < today) {
+          roundValue = 7;
+          visualValue = '7';
+        } else {
+          roundValue = 0;
+          visualValue = ' ';
+        }
+        playerTotal += roundValue;
+        return visualValue;
       });
       round.scores[player].total = playerTotal;
     }
@@ -196,10 +210,12 @@ export class GoogleSheet {
       round.scores[player] = {total: 0, holes: []};
       round.scores[player].holes = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(day => {
         let score;
-        if (rows[day].get(player) === 'x' || rows[day].get(player) === 'X') {
+        if (rows[day].get(player) === '6.5') {
           playerTotal += 6.5;
           score = 'x';
         } else if (!rows[day].get(player)) {
+          rows[day].set(player, 7);
+          rows[day].save();
           playerTotal += 7;
           score = 'X';
         } else {
@@ -333,4 +349,21 @@ export class GoogleSheet {
 
   private uid = () => Math.random().toString(36).substring(2, 6);
 
+}
+
+export enum ScoringErrorType{
+  ROUND_NOT_FOUND,
+  ROUND_OVER,
+  ROUND_NOT_STARTED,
+  ALREADY_SCORED,
+}
+
+export class ScoringError extends Error {
+  type: ScoringErrorType;
+
+  constructor(type: ScoringErrorType, msg: string) {
+    super(msg);
+    this.type = type;
+    this.name = "ScoringError";
+  }
 }
