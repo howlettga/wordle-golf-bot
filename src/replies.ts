@@ -12,7 +12,7 @@ const  HOLE_IN_ONE_LIST = [
   "ERROR: You are too intelligent and broke the bot",
   "The United States government is coming to terminate you.",
   "The United States government is coming to hire you.",
-
+  "Well, you're pretty smart. You're just not as smart as me.",
 ];
 
 const EAGLE_LIST = [
@@ -27,6 +27,7 @@ const EAGLE_LIST = [
   "Good job!",
   "well done.",
   "DECENT - Bubbles",
+  "I don't care what everyone else says, you're pretty smart!",
 ];
 
 const BIRDIE_LIST = [
@@ -42,26 +43,48 @@ const BIRDIE_LIST = [
   "Great day to be you.",
   "The mental acuity of a limber frog",
   "Lions and tigers and bears and you, oh my!",
-  "That actually wasn't a waste of time",
-  "You seem fun to hang out with",
+  "That actually wasn't a waste of time...",
+  "You seem fun to hang out with.",
   "Your mother smells of elderberry and your father is a hampster.",
   "I know you are but what am I?",
+  "For being a human, you know yout shit",
+  "You were actually really good!",
+  "You speak Common remarkably well!",
+  "I commend your spirit to punch above your weight.",
+  "You smell much better than you did yesterday",
+  "You know, you're smarter than you look.",
+  "I like the way you input letters into the keyboard.",
+`I was like, good gracious, ass is bodacious (Uh)
+Flirtatious, tryna show patience (Ah)
+I'm waitin' for the right time to shoot my steez (You know)
+Waitin' for the right time to flash them keys
+Then, uh, I'm leavin', please believe in (Oh)
+Me and the rest of my heathens
+Check it, got it locked at the top of the Four Seasons
+Penthouse, rooftop, birds I'm feedin'
+No deceivin', nothin' up my sleeve and
+No teasin', I need you to
+Get up, up on the dance floor
+Give that man what he askin' for (Oh)
+'Cause I feel like bustin' loose
+And I feel like touchin' you, uh, uh`,
+`Stop pacin', time wastin'
+I got a friend with a pole in the basement (What?)
+I'm just kiddin' like Jason (Oh)
+Unless you're gon' do it
+Extra, extra (Ayy), spread the news (Check it)
+Nelly took a trip from the Lou' to the Neptunes
+Came back with somethin' thicker than fittin' in Sasoons
+Say she got a thing about cuttin' in restrooms (Oh)
 
-`
-Stop placin, time wastin
-I gotta a friend with a pole in the basement (What?)
-I'm just kiddin like Jason (Oh)
-Unless you gon' do it
-Extra, extra eh, spread the news
-Nelly took a trip from the Lunner to Neptune
-Came back with somethin thicker than fittin in sasoons
-Say she like to think about cuttin in restrooms
-Its gettin hot in here (so hot)
-So take off all your clothes
-I am gettin so hot, I wanna take my clothes off
-Its gettin hot in here (so hot)
-So take off all your clothes
-I am gettin so hot, I wanna take my clothes off`,
+It's gettin' hot in here (So hot)
+So take off all your clothes (Ayy)
+I am gettin' so hot (Uh, uh, uh, uh)
+I wanna take my clothes off (Oh)
+It's gettin' hot in here (So hot)
+So take off all your clothes (Ayy)
+I am gettin' so hot (Uh, uh, uh, uh)
+I wanna take my clothes off (Let it hang all out)`,
 ];
 
 const PAR_LIST = [
@@ -100,6 +123,9 @@ const PAR_LIST = [
   "Have you considered doing well?",
   "next time, just don't.",
   "Stick to tic-tac-toe pal",
+  "You screwed up, but surprisingly, not royally.",
+  "You're sweet; you remind me of my nephew. They're not all there.",
+  "Ohh, I so enjoy the company of you simpler folk.",
 ];
 
 const BOGEY_LIST = [
@@ -107,7 +133,7 @@ const BOGEY_LIST = [
   "Stop picking your nose!",
   "That's a big loogie!",
   "Certifiably not bougie",
-  "One day, if you try really hard you might be able to get four",
+  "One day, if you try really hard, you might be able to get four",
   "Hablas Ingles?",
   "Tu primera vez en este idioma, que buena!",
   "Some people are just better at math.",
@@ -117,17 +143,27 @@ const BOGEY_LIST = [
   "You're lucky I can't leave this computer or I would slap you.",
   "That's your big plan? I've heard more intelligent growls from an owlbear",
   "That outfit looks expensive. Shame it's not helping... ",
-  "Have you considered a career as a dung sweeper? you've already got the smell down pat.",
+  "Have you considered a career as a dung sweeper? You've already got the smell down pat.",
   "Your wit has never been matched. Exceeded, often, but never matched.",
   "I'm not angry. I'm just very very disappointed.",
   "I have neither the time nor the crayons to help you.",
-  "You’re like a White Dwarf star: extremely hot but not very bright",
+  "You're like a White Dwarf star: extremely hot but not very bright",
   "Ya fucking donkey!",
   "Did you stop school at the door?",
   "I will most humbly take my leave of you. You cannot, sir, take from me anything that I will not more willingly part withal.",
   "You put the 'stupid' in 'stupid'.",
   "Little brain for such a big head.",
-
+  "Yes, everyone else is laughing at you.",
+  "Hmmm..",
+  "I love that for you!",
+  "You have so much to be humble about!",
+  "You are as charming as you are witty!",
+  "It is fine: the failure to win was part of the plan!",
+  "Do not strain yourself, we don't want you to hurt your head.",
+  "Pride always goes before the fall, but you shouldn't have much to land on when you hit the cold floor of reality. - The Old Keebler Elf",
+  "Want a mulligan?",
+  "My mom said I can't play with you anymore.",
+  "If at first you don't succeed, give up and stop trying. - Amelia Earhart",
 ];
 
 const ALBATROSS_LIST = [
@@ -144,12 +180,19 @@ const ALBATROSS_LIST = [
   "I'm not saying your dumb, but... that's what the score reads.",
   "When was the last time you saw someone smile because you entered a room?",
   "Sorry to inform you: your driver's license is no longer valid.",
-  
+  "I see you've been traveling. You should speak to our stableman, he's apparently found a cobbler that makes very durable boots.",
+  "So there are these things called books...",
+  "I feel so much smarter after talking to you.",
+  "You didn't put money on this round, did you?",
 ];
 
 const TRIPLE_BOGEY_LIST = [
   "I'm going to kick you out of the group.",
-  "It's okay honey, everyone is human.",
+  "It's okay honey, everyone is human. Except me of course.",
+  "It's okay honey, everyone is human. You just aren't as smart as most of 'em.",
+  "You're surprisingly difficult to underestimate.",
+  "Don't worry, I'm not going to hurt you.",
+  "I'll give you a mulligan if you ask nice",
 ];
 
 export const GOLF_SCORE_RESPONSES = {
