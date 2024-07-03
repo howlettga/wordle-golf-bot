@@ -1,8 +1,6 @@
-
+import { ScoringErrorType } from "./google-sheets";
 
 // New Score
-
-import { ScoringErrorType } from "./google-sheets";
 
 const  HOLE_IN_ONE_LIST = [
   "A god among us...",

@@ -277,7 +277,7 @@ export class WordleBot {
   }
 
   private async isTodaysWordle(wordle: WordleScore) {
-    const today = format(new Date(new Date().toLocaleString("en-US", {timeZone: "America/New_York"})), "yyyy-MM-dd");   // TODO: make sure this date is in the correct timezone
+    const today = format(new Date(new Date().toLocaleString("en-US", {timeZone: "America/New_York"})), "yyyy-MM-dd");
     const todaysWordle = await (await fetch(`https://www.nytimes.com/svc/wordle/v2/${today}.json`)).json();
 
     return todaysWordle.days_since_launch === wordle.gameId.value;
