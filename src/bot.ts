@@ -4,13 +4,18 @@ import { User } from "grammy/types";
 import fetch from 'node-fetch';
 import { format } from "date-fns";
 import { scheduleJob } from "node-schedule";
-import { GoogleSheet } from "./google-sheets";
+import { GoogleSheet, ScoringError } from "./google-sheets";
+import { DECLINE_RESPONSE, ENTHUSIASTIC_RESPONSE, ERROR_CONFIRMATION, GOLF_SCORE_RESPONSES, INSTRUCTIONS, NAUGHTY, SAME_PERSON, SCORE_ERROR, START_NEW_ROUND, UNKNOWN_PERSON } from "./replies";
 import 'dotenv/config';
 
 type MyContext = Context & ConversationFlavor;
 type MyConversation = Conversation<MyContext>;
 
 interface WordleScore {
+  playerId: string;
+  userId: number;
+  username?: string;
+  userFirstName: string;
   initialWord: string;
   gameId: {
     label: string;
@@ -26,10 +31,15 @@ interface WordleScore {
 export class WordleBot {
   private bot: Bot<MyContext>;
   private sheet: GoogleSheet;
+  private spankRequests: {
+    init: { message_id: number, thread_id?: number }[];
+    follow: { message_id: number, thread_id?: number }[];
+  };
 
   constructor(sheet: GoogleSheet) {
     this.bot = new Bot<MyContext>(process.env.TELEGRAM_BOT_TOKEN as string);
     this.sheet = sheet;
+    this.spankRequests = { init: [], follow: [] };
   }
 
   start() {
@@ -51,61 +61,41 @@ export class WordleBot {
       ctx.reply("I'm sorry, there was an error :(\nI've been a bad bot", { message_thread_id: ctx.message?.message_thread_id });
     });
 
-    this.bot.start();
+    this.bot.start({
+      allowed_updates: [ "message", "message_reaction" ],
+    });
     this.initScheduledMessages();
   }
 
   private async newRound(conversation: MyConversation, ctx: MyContext) {
     const initiator = ctx.from;
-    await ctx.reply(`@${initiator?.first_name} has requested to start a new round of Wordle Golf. Would someone confirm? (yes/no)\n\n🚨This will reset the existing round!`, { message_thread_id: ctx.message?.message_thread_id });
+    
+    await ctx.reply(`<a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name}</a> has requested to start a new round of Wordle Golf. Would someone confirm? (yes/no)\n\n🚨This will reset any existing round!`, {
+      message_thread_id: ctx.message?.message_thread_id,
+      parse_mode: "HTML",
+    });
     const { message } = await conversation.wait();
     const respondor = message?.from;
 
     if (!initiator || !respondor) {
-      await ctx.reply("I'm sorry, I can't figure out who's talking. Please help pay for my education", { message_thread_id: ctx.message?.message_thread_id });
+      await this.replyAll(UNKNOWN_PERSON, ctx);
     } else if (message.text?.toLowerCase() === 'no' || message.text?.toLowerCase() === 'n') {
-      await ctx.reply("Well that's no fun! I guess we know who the loser of the group is 😝", {
-        reply_parameters: {
-          message_id: message.message_id,
-        },
-        message_thread_id: ctx.message?.message_thread_id
-      });
+      await this.replyOne(DECLINE_RESPONSE, ctx);
     } else if (message.text?.match(/.*bad bot.*/i)) {
-      await ctx.reply("You're right, I'm very naughty 👺", {
-        reply_parameters: {
-          message_id: message.message_id,
-        },
-        message_thread_id: ctx.message?.message_thread_id
-      });
+      await this.replyOne(random(NAUGHTY), ctx);
     } else if (respondor.id === initiator.id) {
-      await ctx.reply("You can't start a new round with yourself silly! Make some friends and then we'll talk...", {
-        reply_parameters: {
-          message_id: message.message_id,
-        },
-        message_thread_id: ctx.message?.message_thread_id,
-      });
+      await this.replyOne(SAME_PERSON, ctx);
     } else if (message.text?.toLowerCase() === 'yes' || message?.text?.toLowerCase() === 'y') {
-      console.log(this);
       const title = this.getGroupId(ctx);
       await this.sheet.newSheet(title, ctx.message?.chat.id, ctx.message?.message_thread_id);
-      ctx.reply("New round initiated! Scoring will open tomorrow!\n\nYou must submit a wordle score each day for the next nine days. The lowest score over this period wins!\nUse the /instructions command to request further information.\n\nAnd may the odds be ever in your favor!", { message_thread_id: ctx.message?.message_thread_id });
+      ctx.reply(START_NEW_ROUND, { message_thread_id: ctx.message?.message_thread_id });
     } else if (message.text?.match(/^yes!*\z/i)) {
-      ctx.reply("Now that's the spirit! With pizzazz like that, I just give you some free points this round 😎", {
-        reply_parameters: {
-          message_id: message.message_id,
-        },
-        message_thread_id: ctx.message?.message_thread_id
-      });
+      await this.replyOne(ENTHUSIASTIC_RESPONSE, ctx);
       const title = this.getGroupId(ctx);
       await this.sheet.newSheet(title, ctx.message?.chat.id, ctx.message?.message_thread_id);
-      ctx.reply("New round initiated! Scoring will open tomorrow!\n\nYou must submit a wordle score each day for the next nine days. The lowest score over this period wins!\nUse the /instructions command to request further information.\n\nAnd may the odds be ever in your favor!", { message_thread_id: ctx.message?.message_thread_id });
+      await this.replyAll(START_NEW_ROUND, ctx);
     } else {
-      await ctx.reply("Hmmm, I don't really know what's going on! Now I'm not going to start a new round 🫣", {
-        reply_parameters: {
-          message_id: message.message_id,
-        },
-        message_thread_id: ctx.message?.message_thread_id
-      });
+      await this.replyOne(ERROR_CONFIRMATION, ctx);
     }
   }
 
@@ -117,6 +107,7 @@ export class WordleBot {
 
   private registerHelp() {
     this.bot.command("help", ctx => {
+      // TODO: help - make official help registered with typeahead commands
       ctx.reply("Get bent... I'm not helping you!\nalright, alright. just use the /instructions command to figure out how to play idot", {
         reply_parameters: {
           message_id: ctx.message!.message_id,
@@ -127,40 +118,23 @@ export class WordleBot {
   }
 
   private registerInstructions() {
-    this.bot.command("instructions", (ctx) => ctx.reply(
-`Welcome to Wordle Golf!
-The game the NYT can't be bothered to invest development resources into, so... I am a bot to help you keep score!
-
-Use the /wordle command to start a new round. The round will begin the day after you use the /wordle command.
-Each new round consists of 9 days of scoring. The lowest score over the 9 days wins!
-
-Each day, complete the Wordle and use the share button to submit your score to this chat thread. Only share your summary! No screenshots of the actual words used.
-
-At the end of the nine days, I'll let you know you is smart and who is not! You can use the /scorecard command to see the standings at any time.
-
-Scoring:
-- 1 point for each guess it took to get the word
-- 6.5 points if you do not finish
-- 7 points if you miss the day
-
-May the odds be ever in your favor!
-`, {
-        message_thread_id: ctx.message?.message_thread_id
-      }));
+    this.bot.command("instructions", async ctx => {
+      await this.replyAll(INSTRUCTIONS, ctx);
+    });
   }
 
   private registerScorecard() {
+    // TODO: doesn't work off reply - fixed via id update
     this.bot.command("scorecard", async (ctx) => {
       const title = this.getGroupId(ctx);
       const report = await this.getReport(title);
       
-      ctx.reply(report, { message_thread_id: ctx.message?.message_thread_id });
+      await this.replyAll(report, ctx);
     });
   }
 
   private registerScore() {
     this.bot.hears(/^Wordle.*/, async (ctx) => {
-      // console.log(ctx.message);
       if (ctx.from && ctx.message?.text) {
         const title = this.getGroupId(ctx);
         const wordle = this.parseWordleScore(ctx.message.text, ctx.from);
@@ -168,61 +142,44 @@ May the odds be ever in your favor!
           if (this.validateWordleScore(wordle)) {
             try {
               await this.sheet.addScore(wordle.playerId, wordle.score.value, title);
-              // TODO bogey, par, etc
-              ctx.reply(`Thanks for submitting your wordle score!\nYou have been marked down for a score of ${wordle.score.value}.${wordle.username ? '' : '\n\nP.S. You might want to add a username so I know how to better address you in the future'}`, {
-                reply_parameters: {
-                  message_id: ctx.message!.message_id,
-                },
-                message_thread_id: ctx.message?.message_thread_id });
-            } catch (err: any) {
-              if (err.message === 'ROUND_NOT_FOUND') {
-                ctx.reply("What are you trying to play?? A round hasn't been initiated fool!\nStart a new round with /wordle to get playing Wordle Golf!", {
-                  reply_parameters: {
-                    message_id: ctx.message!.message_id,
-                  },
-                  message_thread_id: ctx.message?.message_thread_id
-                });
-              } else if (err.message === 'ROUND_OVER') {
-                // im not sure this can ever hit with the new archive and schedule logic. Maybe at 8am on the next day
-                ctx.reply("It appears the round has ended. Start a new round to continue playing Wordle Golf!", { message_thread_id: ctx.message?.message_thread_id });
-              } else if (err.message === 'ROUND_NOT_STARTED') {
-                ctx.reply("The round hasn't started yet dumbass. Wait till tomorrow!", {
-                  reply_parameters: {
-                    message_id: ctx.message!.message_id,
-                  },
-                  message_thread_id: ctx.message?.message_thread_id 
-                });
-               } else if (err.message === 'ALREADY_SCORED') {
-                ctx.reply("You have already submitted your score for today idiot. No need to resubmit!", {
-                  reply_parameters: {
-                    message_id: ctx.message!.message_id,
-                  },
-                  message_thread_id: ctx.message?.message_thread_id,
-                });
+              switch (wordle.score.value) {
+                case 1:
+                case 2:
+                case 3:
+                case 4:
+                case 5:
+                case 6:
+                case 6.5:
+                  this.replyOne(`${GOLF_SCORE_RESPONSES[wordle.score.value].score}! ${random(GOLF_SCORE_RESPONSES[wordle.score.value].responses)}`, ctx);
+                  break;
+                default:
+                  this.replyOne(`You have been marked down for a score of ${wordle.score.value}.`, ctx);
+                  break;
+              }
+            } catch (err: unknown) {
+              if (err instanceof ScoringError) {
+                this.replyOne(SCORE_ERROR[err.type], ctx);
               } else {
                 console.log(err);
-                ctx.reply("There was an issue submitting your score :(\nI'm not sure why", {
-                  reply_parameters: {
-                    message_id: ctx.message!.message_id,
-                  },
-                  message_thread_id: ctx.message?.message_thread_id 
-                });
+                this.replyOne("There was an issue submitting your score :(\nI'm not sure why", ctx);
               }
             }
           } else {
-            ctx.reply(`🚨🚨🚨 CHEATER 🚨🚨🚨\nSomething is wrong with your wordle score! @${ctx.from.username}`, {
+            ctx.reply(`🚨🚨🚨 CHEATER 🚨🚨🚨\nSomething is wrong with your wordle score <a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name} the CHEATER</a>!`, {
               reply_parameters: {
                 message_id: ctx.message!.message_id,
               },
               message_thread_id: ctx.message?.message_thread_id,
+              parse_mode: "HTML",
             });
           }
         } else {
-          ctx.reply(`This is not today's score @${ctx.from.username}. Don't try to fool me!`, {
+          ctx.reply(`This is not today's score <a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name} the CHEATER</a>. Don't try to fool me!`, {
             reply_parameters: {
               message_id: ctx.message!.message_id,
             },
             message_thread_id: ctx.message?.message_thread_id,
+            parse_mode: "HTML",
           });
         }
       } else {
@@ -232,14 +189,21 @@ May the odds be ever in your favor!
   }
 
   private registerEasterEggs() {
-    this.bot.hears(/.*\bbad bot\b.*/i, async (ctx) => {
-      ctx.reply("You can spank me now 😈", {
-        reply_parameters: {
-          message_id: ctx.message!.message_id,
-        },
-        message_thread_id: ctx.message?.message_thread_id,
-      });
+    this.registerSpankReactions();
+    this.bot.hears(/.*\bluckily i have\b.*/i, async (ctx) => {
+      await this.replyOne("Luckily I have woord", ctx);
     });
+    this.bot.hears(/.*butthole.*|.*butt hole.*/i, async (ctx) => {
+      await this.replyOne("SHOW ME YOUR BUTT HOLE!!!", ctx);
+    })
+    this.bot.hears(/.*\bshow me your butthole\b.*/i, async (ctx) => {
+      await this.replyAll(`I rate it a ${random([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])}!`, ctx);
+    });
+    // i would rate it (butthole) [1-10]
+    this.bot.hears(/.*\bbad bot\b.*/i, async (ctx) => {
+      const msg = await this.replyOne("You can spank me now 😈", ctx);
+      this.spankRequests.init.push({ message_id: msg.message_id, thread_id: ctx.message?.message_thread_id });
+    }); // add spank reaction reaction
     this.bot.hears(/.*\bcheater\b.*/i, async (ctx) => {
       ctx.reply("🚨🚨🚨 CHEATER ALERT 🚨🚨🚨 CHEATER ALERT 🚨🚨🚨 CHEATER ALERT 🚨🚨🚨\n\nLooks like we have a cheater!! Get em!!!!!!", { message_thread_id: ctx.message?.message_thread_id });
     });
@@ -252,12 +216,29 @@ May the odds be ever in your favor!
       });
     });
   }
+  
+  private registerSpankReactions() {
+    this.bot.reaction("👏", async ctx => {
+      const spank = this.spankRequests.init.find(element => element.message_id === ctx.update.message_reaction.message_id);
+      if (spank) {
+        const msg = await ctx.reply("Inghhhhuhhuhhh! YESSS that's just how I like it!", {
+          message_thread_id: spank.thread_id,
+        });
+        this.spankRequests.follow.push({ message_id: msg.message_id, thread_id: spank.thread_id });
+      }
+      const spankRes = this.spankRequests.follow.find(element => element.message_id === ctx.update.message_reaction.message_id);
+      if (spankRes) {
+        await ctx.reply("You are so good to me! 💜💜💜🤤", { message_thread_id: spankRes.thread_id });
+      }
+    });
+  }
 
   private initScheduledMessages() {
     const that = this;
     const daily = scheduleJob('0 9 * * *', async function() {
       const rounds = await that.sheet.getActiveRounds(false);
       for (const round of rounds) {
+        // TODO: have a special message on the first day of the round
         await that.bot.api.sendMessage(round.title.split('|')[1], "One more day down! Don't forget to submit today's score.\nFeel free to use the /scorecard command to check the current standings.", { message_thread_id: round.threadId });
       }
     }.bind(this));
@@ -272,7 +253,7 @@ May the odds be ever in your favor!
 
   /** HELPERS */
 
-  private parseWordleScore(message: string, user: User) {
+  private parseWordleScore(message: string, user: User): WordleScore {
     const lines = message.split("\n");
     const title = lines[0].split(" ");
 
@@ -288,40 +269,53 @@ May the odds be ever in your favor!
       },
       score: {
         label: title[2],
-        value: parseInt(title[2].split('/')[0]),
+        // display: title[2].split('/')[0],
+        value: title[2].split('/')[0] === 'X' ? 6.5 : parseInt(title[2].split('/')[0]),
       },
       lines: lines,
     };
   }
 
   private async isTodaysWordle(wordle: WordleScore) {
-    const today = format(new Date(), "yyyy-MM-dd");
+    const today = format(new Date(new Date().toLocaleString("en-US", {timeZone: "America/New_York"})), "yyyy-MM-dd");
     const todaysWordle = await (await fetch(`https://www.nytimes.com/svc/wordle/v2/${today}.json`)).json();
-  
+
     return todaysWordle.days_since_launch === wordle.gameId.value;
   }
 
   private validateWordleScore(wordle: WordleScore) {
     const scoring = wordle.score.label.split("/");
-    if (scoring.length !== 2 || scoring[1] !== '6' || parseInt(scoring[0]) < 1 || parseInt(scoring[0]) > 6) {
+
+    if (scoring.length !== 2 || scoring[1] !== '6') {
+      return false;
+    }
+
+    if (scoring[0] === 'X') {
+      // did not finish special case
+      if (wordle.lines.length === 8 && wordle.lines[wordle.lines.length - 1] !== "🟩🟩🟩🟩🟩") {
+        return true;
+      }
+    }
+
+    if (parseInt(scoring[0]) < 1 || parseInt(scoring[0]) > 6) {
       return false
     }
-  
+
     if (wordle.lines.length !== wordle.score.value + 2) {
       return false
     }
-  
+
     if (wordle.lines[wordle.lines.length - 1] !== "🟩🟩🟩🟩🟩") {
       return false
     }
-  
+
     return true;
   }
 
   private async getReport(groupId: string) {
     try {
       const round = await this.sheet.getScoringReport(groupId);
-  
+
       let replyString = "Current Round:\n-----\n";
       replyString += `Started on ${format(round.startDate, 'M/d/yy')}\n${round.days} days completed`;
       replyString += "\n-----\nScores:\n\n";
@@ -330,7 +324,7 @@ May the odds be ever in your favor!
         replyString += `${playerInfo.firstName}: ${round.scores[player].total}\n    ${round.scores[player].holes.join(" ")}\n`;
       }
       replyString += "-----\nScores may be adjusted for penalties on conclusion of the round.\nThanks for playing!";
-  
+
       return replyString;
     } catch (err: any) {
       if (err.message === "SHEET_NOT_FOUND") {
@@ -389,6 +383,14 @@ Thanks for playing! You can start a new round with the /wordle command!
     } else {
       return ctx.message.chat.title + "|" + ctx.message.chat.id;
     }
+
+    // TODO: fix id for supergroup - replies/threads do not retain topic title to reference
+    //   once this is fixed in the id, we need to update the new round to retain the topic title at least in the sheet data
+    // if (ctx.message?.chat.type === "supergroup") {
+    //   return ctx.message.chat.id  + "|" + ctx.message.message_thread_id;
+    // } else {
+    //   return ctx.message.chat.title + "|" + ctx.message.chat.id;
+    // }
   }
 
   private getPlayerId(user: User) {
@@ -400,4 +402,15 @@ Thanks for playing! You can start a new round with the /wordle command!
     return { userId, firstName };
   }
 
+  private replyAll(message: string, ctx: MyContext) {
+    return ctx.reply(message, { message_thread_id: ctx.message?.message_thread_id });
+  }
+
+  private replyOne(message: string, ctx: MyContext) {
+    return ctx.reply(message, { reply_to_message_id: ctx.message?.message_id, message_thread_id: ctx.message?.message_thread_id });
+  }
+}
+
+function random(arr:any[]) {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
