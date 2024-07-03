@@ -31,10 +31,15 @@ interface WordleScore {
 export class WordleBot {
   private bot: Bot<MyContext>;
   private sheet: GoogleSheet;
+  private spankRequests: {
+    init: { message_id: number, thread_id?: number }[];
+    follow: { message_id: number, thread_id?: number }[];
+  };
 
   constructor(sheet: GoogleSheet) {
     this.bot = new Bot<MyContext>(process.env.TELEGRAM_BOT_TOKEN as string);
     this.sheet = sheet;
+    this.spankRequests = { init: [], follow: [] };
   }
 
   start() {
@@ -56,7 +61,9 @@ export class WordleBot {
       ctx.reply("I'm sorry, there was an error :(\nI've been a bad bot", { message_thread_id: ctx.message?.message_thread_id });
     });
 
-    this.bot.start();
+    this.bot.start({
+      allowed_updates: [ "message", "message_reaction" ],
+    });
     this.initScheduledMessages();
   }
 
@@ -182,15 +189,21 @@ export class WordleBot {
   }
 
   private registerEasterEggs() {
-    this.bot.hears(/.*\bbad bot\b.*/i, async (ctx) => {
-      // TODO: add randomized string response
-      ctx.reply("You can spank me now 😈", {
-        reply_parameters: {
-          message_id: ctx.message!.message_id,
-        },
-        message_thread_id: ctx.message?.message_thread_id,
-      });
+    this.registerSpankReactions();
+    this.bot.hears(/.*\bluckily i have\b.*/i, async (ctx) => {
+      await this.replyOne("Luckily I have woord", ctx);
     });
+    this.bot.hears(/.*butthole.*|.*butt hole.*/i, async (ctx) => {
+      await this.replyOne("SHOW ME YOUR BUTT HOLE!!!", ctx);
+    })
+    this.bot.hears(/.*\bshow me your butthole\b.*/i, async (ctx) => {
+      await this.replyAll(`I rate it a ${random([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])}!`, ctx);
+    });
+    // i would rate it (butthole) [1-10]
+    this.bot.hears(/.*\bbad bot\b.*/i, async (ctx) => {
+      const msg = await this.replyOne("You can spank me now 😈", ctx);
+      this.spankRequests.init.push({ message_id: msg.message_id, thread_id: ctx.message?.message_thread_id });
+    }); // add spank reaction reaction
     this.bot.hears(/.*\bcheater\b.*/i, async (ctx) => {
       ctx.reply("🚨🚨🚨 CHEATER ALERT 🚨🚨🚨 CHEATER ALERT 🚨🚨🚨 CHEATER ALERT 🚨🚨🚨\n\nLooks like we have a cheater!! Get em!!!!!!", { message_thread_id: ctx.message?.message_thread_id });
     });
@@ -201,6 +214,22 @@ export class WordleBot {
         },
         message_thread_id: ctx.message?.message_thread_id,
       });
+    });
+  }
+  
+  private registerSpankReactions() {
+    this.bot.reaction("👏", async ctx => {
+      const spank = this.spankRequests.init.find(element => element.message_id === ctx.update.message_reaction.message_id);
+      if (spank) {
+        const msg = await ctx.reply("Inghhhhuhhuhhh! YESSS that's just how I like it!", {
+          message_thread_id: spank.thread_id,
+        });
+        this.spankRequests.follow.push({ message_id: msg.message_id, thread_id: spank.thread_id });
+      }
+      const spankRes = this.spankRequests.follow.find(element => element.message_id === ctx.update.message_reaction.message_id);
+      if (spankRes) {
+        await ctx.reply("You are so good to me! 💜💜💜🤤", { message_thread_id: spankRes.thread_id });
+      }
     });
   }
 
