@@ -8,8 +8,26 @@ import { GoogleSheet, ScoringError } from "./google-sheets";
 import { DECLINE_RESPONSE, ENTHUSIASTIC_RESPONSE, ERROR_CONFIRMATION, GOLF_SCORE_RESPONSES, INSTRUCTIONS, NAUGHTY, SAME_PERSON, SCORE_ERROR, START_NEW_ROUND, UNKNOWN_PERSON } from "./replies";
 import 'dotenv/config';
 
+// TODO
+//   - dates all based on eastern time?
+//   - change indexing from date to game number
+//   - make final results happen on next day instead of day after
+//   - add parameterization of game start (options)
+//   - first name specification?
+//   - scorecard match formatting of final results
+
 type MyContext = Context & ConversationFlavor;
 type MyConversation = Conversation<MyContext>;
+
+export interface WordleGameConfig {
+  id: string; // game id based on message thread
+  chatId?: number;
+  threadId?: number;
+  rounds: number;
+  mulligans: number;
+  initiationDate: string;
+  initialGameNumber: number;
+}
 
 interface WordleScore {
   playerId: string;
@@ -17,10 +35,7 @@ interface WordleScore {
   username?: string;
   userFirstName: string;
   initialWord: string;
-  gameId: {
-    label: string;
-    value: number;
-  };
+  puzzle: number;
   score: {
     label: string;
     value: number;
@@ -46,7 +61,7 @@ export class WordleBot {
     this.bot.use(session({ initial: () => ({}) }));
     this.bot.use(conversations());
 
-    this.bot.use(createConversation(this.newRound.bind(this), 'new-round'));
+    this.bot.use(createConversation(this.newRoundDialogue.bind(this), 'new-round'));
 
     this.registerWordle();
     this.registerScore();
@@ -65,38 +80,6 @@ export class WordleBot {
       allowed_updates: [ "message", "message_reaction" ],
     });
     this.initScheduledMessages();
-  }
-
-  private async newRound(conversation: MyConversation, ctx: MyContext) {
-    const initiator = ctx.from;
-    
-    await ctx.reply(`<a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name}</a> has requested to start a new round of Wordle Golf. Would someone confirm? (yes/no)\n\n🚨This will reset any existing round!`, {
-      message_thread_id: ctx.message?.message_thread_id,
-      parse_mode: "HTML",
-    });
-    const { message } = await conversation.wait();
-    const respondor = message?.from;
-
-    if (!initiator || !respondor) {
-      await this.replyAll(UNKNOWN_PERSON, ctx);
-    } else if (message.text?.toLowerCase() === 'no' || message.text?.toLowerCase() === 'n') {
-      await this.replyOne(DECLINE_RESPONSE, ctx);
-    } else if (message.text?.match(/.*bad bot.*/i)) {
-      await this.replyOne(random(NAUGHTY), ctx);
-    } else if (respondor.id === initiator.id) {
-      await this.replyOne(SAME_PERSON, ctx);
-    } else if (message.text?.toLowerCase() === 'yes' || message?.text?.toLowerCase() === 'y') {
-      const title = this.getGroupId(ctx);
-      await this.sheet.newSheet(title, ctx.message?.chat.id, ctx.message?.message_thread_id);
-      ctx.reply(START_NEW_ROUND, { message_thread_id: ctx.message?.message_thread_id });
-    } else if (message.text?.match(/^yes!*\z/i)) {
-      await this.replyOne(ENTHUSIASTIC_RESPONSE, ctx);
-      const title = this.getGroupId(ctx);
-      await this.sheet.newSheet(title, ctx.message?.chat.id, ctx.message?.message_thread_id);
-      await this.replyAll(START_NEW_ROUND, ctx);
-    } else {
-      await this.replyOne(ERROR_CONFIRMATION, ctx);
-    }
   }
 
   private registerWordle() {
@@ -136,8 +119,28 @@ export class WordleBot {
   private registerScore() {
     this.bot.hears(/^Wordle.*/, async (ctx) => {
       if (ctx.from && ctx.message?.text) {
+        try {
+          const wordle = this.parseWordleScore(ctx.message.text, ctx.from);
+          
+        } catch (err) {
+          if (err instanceof ValidationError) {
+            // todo: handle validation error
+            this.replyAll(err.message, ctx);
+          }
+        }
+
+      } else {
+        this.replyAll(UNKNOWN_PERSON, ctx);
+      }
+    });
+  }
+
+  private registerScoreArchive() {
+    this.bot.hears(/^Wordle.*/, async (ctx) => {
+      if (ctx.from && ctx.message?.text) {
         const title = this.getGroupId(ctx);
         const wordle = this.parseWordleScore(ctx.message.text, ctx.from);
+        console.log(wordle);
         if (await this.isTodaysWordle(wordle)) {
           if (this.validateWordleScore(wordle)) {
             try {
@@ -251,22 +254,120 @@ export class WordleBot {
     })
   }
 
-  /** HELPERS */
+  /** CONVERSATION DIALOGUE  */
 
+  private async newRoundDialogue(conversation: MyConversation, ctx: MyContext) {
+    if (await this.verifyRoundInitiationDialogue(conversation, ctx)) {
+      await this.replyAll("Let's get this round started!", ctx);
+      const roundParameters = await this.gatherRoundParametersDialogue(conversation, ctx);
+      if (roundParameters) {
+        const todayInfo = await this.getTodaysWordle();
+
+        const game: WordleGameConfig = {
+          id: this.getGroupId(ctx),
+          chatId: ctx.message?.chat.id,
+          threadId: ctx.message?.message_thread_id,
+          rounds: roundParameters.rounds,
+          mulligans: roundParameters.mulligans,
+          initiationDate: todayInfo.date,
+          initialGameNumber: todayInfo.gameNumber,
+        };
+        await this.sheet.newGame(game);
+        this.replyAll(START_NEW_ROUND, ctx);
+      }
+    }
+  }
+
+  private async verifyRoundInitiationDialogue(conversation: MyConversation, ctx: MyContext) {
+    const initiator = ctx.from;
+    
+    await ctx.reply(`<a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name}</a> has requested to start a new round of Wordle Golf. Would someone confirm? (yes/no)\n\n🚨This will reset any existing round!`, {
+      message_thread_id: ctx.message?.message_thread_id,
+      parse_mode: "HTML",
+    });
+    const { message } = await conversation.wait();
+    const respondor = message?.from;
+
+    if (!initiator || !respondor) {
+      await this.replyAll(UNKNOWN_PERSON, ctx);
+    } else if (message.text?.toLowerCase() === 'no' || message.text?.toLowerCase() === 'n') {
+      await this.replyAll(DECLINE_RESPONSE, ctx);
+    } else if (respondor.id === initiator.id) {
+      await this.replyOne(SAME_PERSON, ctx);
+    } else if (message.text?.toLowerCase() === 'yes' || message?.text?.toLowerCase() === 'y') {
+      return true;
+    } else {
+      await this.replyOne(ERROR_CONFIRMATION, ctx);
+    }
+    return false;
+  }
+
+  private async gatherRoundParametersDialogue(conversation: MyConversation, ctx: MyContext) {
+    try {
+      await this.replyAll("How many rounds (days) would you like to play?", ctx);
+      const rounds = await this.getNumberDialogue(conversation, ctx);
+      await this.replyAll("How many mulligans (skip days) would you like to include?", ctx);
+      const mulligans = await this.getNumberDialogue(conversation, ctx);
+      if (mulligans > rounds) {
+        await this.replyAll("I'm sorry, you can't have more mulligans than rounds. goodbye.", ctx);
+        return;
+      }
+      return { rounds, mulligans };
+    } catch (err) {
+      console.log(err);
+      return;
+    }
+  }
+
+  private async getNumberDialogue(conversation: MyConversation, ctx: MyContext): Promise<number> {
+    const initiator = ctx.from;
+    const { message } = await conversation.wait();
+    const respondor = message?.from;
+
+    if (!initiator || !respondor) {
+      await this.replyAll(UNKNOWN_PERSON, ctx);
+      throw new Error("invalid");
+    } else if (message.text?.toLowerCase() === 'stop') {
+      await this.replyAll("Leaving this dialogue...", ctx);
+      throw new Error("stop");
+    } else if (respondor.id !== initiator.id) {
+      await ctx.reply(`I'm sorry, the initiator of the game gets to choose the settings. <a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name}</a>?`, {
+        message_thread_id: ctx.message?.message_thread_id,
+        parse_mode: "HTML",
+      });
+      return await this.getNumberDialogue(conversation, ctx);
+    } else if (!message.text) {
+      await this.replyAll("I'm sorry, that is not a valid number. goodbye.", ctx);
+      throw new Error("invalid");
+    } else {
+      const value = parseInt(message.text);
+
+      if (isNaN(value)) {
+        await this.replyAll("I'm sorry, that is not a valid number. goodbye.", ctx);
+        throw new Error("invalid");
+      }
+
+      return value;
+    }
+  }
+
+  /** END CONVERSATION DIALOGUE */
+
+  /** GENERAL HELPERS */
+
+  // TODO
+    // parse and validate
   private parseWordleScore(message: string, user: User): WordleScore {
     const lines = message.split("\n");
     const title = lines[0].split(" ");
 
-    return {
+    const score = {
       playerId: this.getPlayerId(user),
       userId: user.id,
       username: user.username,
       userFirstName: user.first_name,
       initialWord: title[0],
-      gameId: {
-        label: title[1],
-        value: parseInt(title[1].split(",").join("")),
-      },
+      puzzle: parseInt(title[1].split(",").join("")),
       score: {
         label: title[2],
         // display: title[2].split('/')[0],
@@ -274,11 +375,56 @@ export class WordleBot {
       },
       lines: lines,
     };
+
+    if (!this.validateWordleScore(score)) {
+      throw new Error("invalid wordle score");  // todo
+    }
+
+    return score;
+  }
+
+  // private parseWordleScoreArchive(message: string, user: User): WordleScore {
+  //   const lines = message.split("\n");
+  //   const title = lines[0].split(" ");
+
+  //   console.log(message);
+
+  //   // todo: parse date off message.date epoch and then use that against wordle api to retreive game number
+
+  //   return {
+  //     playerId: this.getPlayerId(user),
+  //     userId: user.id,
+  //     username: user.username,
+  //     userFirstName: user.first_name,
+  //     initialWord: title[0],
+  //     gameId: {
+  //       label: title[1],
+  //       value: parseInt(title[1].split(",").join("")),
+  //     },
+  //     score: {
+  //       label: title[2],
+  //       // display: title[2].split('/')[0],
+  //       value: title[2].split('/')[0] === 'X' ? 6.5 : parseInt(title[2].split('/')[0]),
+  //     },
+  //     lines: lines,
+  //   };
+  // }
+
+  private async getTodaysWordle() {
+    const today = format(new Date(new Date().toLocaleString("en-US", {timeZone: "America/New_York"})), "yyyy-MM-dd");
+    const todaysWordle = await (await fetch(`https://www.nytimes.com/svc/wordle/v2/${today}.json`)).json();
+
+    return {
+      date: today,
+      gameNumber: todaysWordle.days_since_launch
+    };
   }
 
   private async isTodaysWordle(wordle: WordleScore) {
     const today = format(new Date(new Date().toLocaleString("en-US", {timeZone: "America/New_York"})), "yyyy-MM-dd");
     const todaysWordle = await (await fetch(`https://www.nytimes.com/svc/wordle/v2/${today}.json`)).json();
+
+    console.log(todaysWordle);
 
     return todaysWordle.days_since_launch === wordle.gameId.value;
   }
@@ -408,6 +554,13 @@ Thanks for playing! You can start a new round with the /wordle command!
 
   private replyOne(message: string, ctx: MyContext) {
     return ctx.reply(message, { reply_to_message_id: ctx.message?.message_id, message_thread_id: ctx.message?.message_thread_id });
+  }
+}
+
+class ValidationError extends Error {
+  constructor(name: string, message: string) {
+    super(message);
+    this.name = name;
   }
 }
 

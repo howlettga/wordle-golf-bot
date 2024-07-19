@@ -7,6 +7,7 @@ import { authenticate } from "@google-cloud/local-auth";
 import { GoogleSpreadsheet, GoogleSpreadsheetWorksheet } from 'google-spreadsheet';
 import { addDays, differenceInCalendarDays, format, parse } from "date-fns";
 import 'dotenv/config';
+import { WordleGameConfig } from "./bot";
 
 export class GoogleSheet {
   private static readonly SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -31,57 +32,97 @@ export class GoogleSheet {
     }
   }
 
-  public newSheet = async (title: string, chatId?: number, threadId?: number) => {
+  public async newGame(config: WordleGameConfig) {
     await this.doc.loadInfo();
 
-    const existingSheet = this.doc.sheetsByTitle[title];
-
+    // archive any existing game with this game id
+    const existingSheet = this.doc.sheetsByTitle[config.id];
     if (existingSheet) {
       await existingSheet.updateProperties({
-        title: `${title.split('|')[0]}|${format(new Date(), 'yy-MM-dd')}|${this.uid()}|bkp`,
+        title: `${config.id.split('|')[0]}|${format(new Date(), 'yy-MM-dd')}|${this.uid()}|bkp`,
       });
     }
 
-    const newSheet = await this.doc.addSheet({
-      title: title,
+    const sheet = await this.doc.addSheet({
+      title: config.id,
     });
-    await newSheet.loadCells('A1:A20');
-    const a1 = newSheet.getCellByA1('A1');
-    const a2 = newSheet.getCellByA1('A2');
-    const a3 = newSheet.getCellByA1('A3');
-    const a4 = newSheet.getCellByA1('A4');
-    const a5 = newSheet.getCellByA1('A5');
-    const a6 = newSheet.getCellByA1('A6');
-    const a7 = newSheet.getCellByA1('A7');
-    const a8 = newSheet.getCellByA1('A8');
-    const a9 = newSheet.getCellByA1('A9');
-    const a10 = newSheet.getCellByA1('A10');
-    const a11 = newSheet.getCellByA1('A11');
-    const a15 = newSheet.getCellByA1('A15');
-    const a16 = newSheet.getCellByA1('A16');
-    const a17 = newSheet.getCellByA1('A17');
-    const a18 = newSheet.getCellByA1('A18');
-    const a19 = newSheet.getCellByA1('A19');
-    const a20 = newSheet.getCellByA1('A20');
-    a1.value = "Player";
-    a2.value = "1";
-    a3.value = "2";
-    a4.value = "3";
-    a5.value = "4";
-    a6.value = "5";
-    a7.value = "6";
-    a8.value = "7";
-    a9.value = "8";
-    a10.value = "9";
-    a11.value = "Total";
-    a15.value = "Start Date:";
-    a16.value = format(addDays(new Date(), 1), "yyyy-MM-dd");
-    a17.value = "Chat ID:";
-    a18.value = chatId;
-    a19.value = "Thread ID:";
-    a20.value = threadId;
-    await newSheet.saveUpdatedCells();
+    await sheet.loadCells(`A1:A${config.rounds+17}`);
+
+    sheet.getCellByA1('A1').value = 'Player';
+
+    // TODO: change config location to header
+    // TODO: verify change
+
+    for (let i = 1; i < config.rounds+1; i++) {
+      sheet.getCellByA1(`A${i + 1}`).value = config.initialGameNumber+i;
+    }
+
+    sheet.getCellByA1(`A${config.rounds+2}`).value = 'Total';
+    sheet.getCellByA1(`A${config.rounds+6}`).value = 'Initiation Date';
+    sheet.getCellByA1(`A${config.rounds+7}`).value = config.initiationDate;
+    sheet.getCellByA1(`A${config.rounds+8}`).value = 'Chat Id';
+    sheet.getCellByA1(`A${config.rounds+9}`).value = config.chatId;
+    sheet.getCellByA1(`A${config.rounds+10}`).value = 'Thread Id';
+    sheet.getCellByA1(`A${config.rounds+11}`).value = config.threadId;
+    sheet.getCellByA1(`A${config.rounds+12}`).value = 'Rounds';
+    sheet.getCellByA1(`A${config.rounds+13}`).value = config.rounds;
+    sheet.getCellByA1(`A${config.rounds+14}`).value = 'Mulligans';
+    sheet.getCellByA1(`A${config.rounds+15}`).value = config.mulligans;
+
+    await sheet.saveUpdatedCells();
   }
+
+  // public newSheet = async (title: string, chatId?: number, threadId?: number) => {
+  //   await this.doc.loadInfo();
+
+  //   const existingSheet = this.doc.sheetsByTitle[title];
+
+  //   if (existingSheet) {
+  //     await existingSheet.updateProperties({
+  //       title: `${title.split('|')[0]}|${format(new Date(), 'yy-MM-dd')}|${this.uid()}|bkp`,
+  //     });
+  //   }
+
+  //   const newSheet = await this.doc.addSheet({
+  //     title: title,
+  //   });
+  //   await newSheet.loadCells('A1:A20');
+  //   const a1 = newSheet.getCellByA1('A1');
+  //   const a2 = newSheet.getCellByA1('A2');
+  //   const a3 = newSheet.getCellByA1('A3');
+  //   const a4 = newSheet.getCellByA1('A4');
+  //   const a5 = newSheet.getCellByA1('A5');
+  //   const a6 = newSheet.getCellByA1('A6');
+  //   const a7 = newSheet.getCellByA1('A7');
+  //   const a8 = newSheet.getCellByA1('A8');
+  //   const a9 = newSheet.getCellByA1('A9');
+  //   const a10 = newSheet.getCellByA1('A10');
+  //   const a11 = newSheet.getCellByA1('A11');
+  //   const a15 = newSheet.getCellByA1('A15');
+  //   const a16 = newSheet.getCellByA1('A16');
+  //   const a17 = newSheet.getCellByA1('A17');
+  //   const a18 = newSheet.getCellByA1('A18');
+  //   const a19 = newSheet.getCellByA1('A19');
+  //   const a20 = newSheet.getCellByA1('A20');
+  //   a1.value = "Player";
+  //   a2.value = "1";
+  //   a3.value = "2";
+  //   a4.value = "3";
+  //   a5.value = "4";
+  //   a6.value = "5";
+  //   a7.value = "6";
+  //   a8.value = "7";
+  //   a9.value = "8";
+  //   a10.value = "9";
+  //   a11.value = "Total";
+  //   a15.value = "Start Date:";
+  //   a16.value = format(addDays(new Date(), 1), "yyyy-MM-dd");
+  //   a17.value = "Chat ID:";
+  //   a18.value = chatId;
+  //   a19.value = "Thread ID:";
+  //   a20.value = threadId;
+  //   await newSheet.saveUpdatedCells();
+  // }
 
   public addScore = async (playerId: string, score: number, sheetTitle: string) => {
     await this.doc.loadInfo();
