@@ -1,6 +1,6 @@
 import express from "express";
 import { WordleBot } from "./bot";
-import { GoogleSheet } from "./google-sheets";
+import { GoogleSheetDataSource } from "./google-sheets";
 
 console.log("Wordle bot booting...");
 
@@ -10,9 +10,9 @@ app.get('/', (req, res) => {
   res.send("Healthy");
 });
 
-GoogleSheet.initAuth().then((auth) => {
-  const sheet = new GoogleSheet(process.env.GOOGLE_SHEET_ID as string, auth);
-  const bot = new WordleBot(sheet);
+GoogleSheetDataSource.initAuth().then((auth) => {
+  const ds = new GoogleSheetDataSource(process.env.GOOGLE_SHEET_ID as string, auth);
+  const bot = new WordleBot(ds);
 
   bot.start();
   app.listen(process.env.PORT || 8080, () => {

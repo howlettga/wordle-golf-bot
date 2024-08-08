@@ -220,8 +220,7 @@ export const SCORE_ERROR: { [ key in ScoringErrorType ]: string} = {
 export const START_NEW_ROUND =
 `New round initiated! Scoring will open tomorrow!
 
-You must submit a wordle score each day for the next nine days. The lowest score over this period wins!
-Use the /help command to request further information.
+The lowest score over this period wins. Use the /help command to request further information.
 
 And may the odds be ever in your favor!
 `;

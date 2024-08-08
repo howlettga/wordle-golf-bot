@@ -1,59 +1,35 @@
+import 'dotenv/config';
 import { Bot, type Context, session } from "grammy";
 import { type Conversation, type ConversationFlavor, conversations, createConversation } from "@grammyjs/conversations";
 import { User } from "grammy/types";
-import fetch from 'node-fetch';
-import { format } from "date-fns";
 import { scheduleJob } from "node-schedule";
-import { GoogleSheet, ScoringError } from "./google-sheets";
-import { DECLINE_RESPONSE, ENTHUSIASTIC_RESPONSE, ERROR_CONFIRMATION, GOLF_SCORE_RESPONSES, INSTRUCTIONS, NAUGHTY, SAME_PERSON, SCORE_ERROR, START_NEW_ROUND, UNKNOWN_PERSON } from "./replies";
-import 'dotenv/config';
-
-// TODO
-//   - dates all based on eastern time?
-//   - change indexing from date to game number
-//   - make final results happen on next day instead of day after
-//   - add parameterization of game start (options)
-//   - first name specification?
-//   - scorecard match formatting of final results
+import { ScoringError } from "./google-sheets";
+import { getTodaysWordle } from "./wordle-api";
+import {
+  DECLINE_RESPONSE,
+  ERROR_CONFIRMATION,
+  GOLF_SCORE_RESPONSES,
+  INSTRUCTIONS,
+  SAME_PERSON,
+  SCORE_ERROR,
+  START_NEW_ROUND,
+  UNKNOWN_PERSON
+} from "./replies";
 
 type MyContext = Context & ConversationFlavor;
 type MyConversation = Conversation<MyContext>;
 
-export interface WordleGameConfig {
-  id: string; // game id based on message thread
-  chatId?: number;
-  threadId?: number;
-  rounds: number;
-  mulligans: number;
-  initiationDate: string;
-  initialGameNumber: number;
-}
-
-interface WordleScore {
-  playerId: string;
-  userId: number;
-  username?: string;
-  userFirstName: string;
-  initialWord: string;
-  puzzle: number;
-  score: {
-    label: string;
-    value: number;
-  };
-  lines: string[];
-}
-
 export class WordleBot {
   private bot: Bot<MyContext>;
-  private sheet: GoogleSheet;
+  private data: WordleGolfDataSource;
   private spankRequests: {
     init: { message_id: number, thread_id?: number }[];
     follow: { message_id: number, thread_id?: number }[];
   };
 
-  constructor(sheet: GoogleSheet) {
+  constructor(dataSource: WordleGolfDataSource) {
     this.bot = new Bot<MyContext>(process.env.TELEGRAM_BOT_TOKEN as string);
-    this.sheet = sheet;
+    this.data = dataSource;
     this.spankRequests = { init: [], follow: [] };
   }
 
@@ -62,6 +38,9 @@ export class WordleBot {
     this.bot.use(conversations());
 
     this.bot.use(createConversation(this.newRoundDialogue.bind(this), 'new-round'));
+
+    // TODO: parameterize?
+    this.registerDev();
 
     this.registerWordle();
     this.registerScore();
@@ -80,6 +59,12 @@ export class WordleBot {
       allowed_updates: [ "message", "message_reaction" ],
     });
     this.initScheduledMessages();
+  }
+
+  private registerDev() {
+    this.bot.command("dev", async ctx => {
+
+    });
   }
 
   private registerWordle() {
@@ -110,9 +95,10 @@ export class WordleBot {
     // TODO: doesn't work off reply - fixed via id update
     this.bot.command("scorecard", async (ctx) => {
       const title = this.getGroupId(ctx);
-      const report = await this.getReport(title);
+      const scorecard = await this.data.getScorecard(title);
+      const report = this.getScorecardMessage(scorecard);
       
-      await this.replyAll(report, ctx);
+      await this.replyAllHtml(report, ctx);
     });
   }
 
@@ -120,73 +106,35 @@ export class WordleBot {
     this.bot.hears(/^Wordle.*/, async (ctx) => {
       if (ctx.from && ctx.message?.text) {
         try {
-          const wordle = this.parseWordleScore(ctx.message.text, ctx.from);
-          
+          const wordle = this.parseWordleScore(ctx.message.text, ctx.from, ctx);
+          await this.data.addScore(wordle);
+          switch (wordle.score.value) {
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+            case 5:
+            case 6:
+            case 6.5:
+              this.replyOne(`${GOLF_SCORE_RESPONSES[wordle.score.value].score}! ${random(GOLF_SCORE_RESPONSES[wordle.score.value].responses)}`, ctx);
+              break;
+            default:
+              this.replyOne(`You have been marked down for a score of ${wordle.score.value}.`, ctx);
+              break;
+          }
         } catch (err) {
           if (err instanceof ValidationError) {
-            // todo: handle validation error
-            this.replyAll(err.message, ctx);
+            // TODO: handle validation error
+            this.replyOne(err.message, ctx);
+          } else if (err instanceof ScoringError) {
+            this.replyOne(SCORE_ERROR[err.type], ctx);
+          } else {
+            console.log(err);
+            this.replyOne("There was an issue submitting your score :(\nI'm not sure why", ctx);
           }
         }
-
       } else {
         this.replyAll(UNKNOWN_PERSON, ctx);
-      }
-    });
-  }
-
-  private registerScoreArchive() {
-    this.bot.hears(/^Wordle.*/, async (ctx) => {
-      if (ctx.from && ctx.message?.text) {
-        const title = this.getGroupId(ctx);
-        const wordle = this.parseWordleScore(ctx.message.text, ctx.from);
-        console.log(wordle);
-        if (await this.isTodaysWordle(wordle)) {
-          if (this.validateWordleScore(wordle)) {
-            try {
-              await this.sheet.addScore(wordle.playerId, wordle.score.value, title);
-              switch (wordle.score.value) {
-                case 1:
-                case 2:
-                case 3:
-                case 4:
-                case 5:
-                case 6:
-                case 6.5:
-                  this.replyOne(`${GOLF_SCORE_RESPONSES[wordle.score.value].score}! ${random(GOLF_SCORE_RESPONSES[wordle.score.value].responses)}`, ctx);
-                  break;
-                default:
-                  this.replyOne(`You have been marked down for a score of ${wordle.score.value}.`, ctx);
-                  break;
-              }
-            } catch (err: unknown) {
-              if (err instanceof ScoringError) {
-                this.replyOne(SCORE_ERROR[err.type], ctx);
-              } else {
-                console.log(err);
-                this.replyOne("There was an issue submitting your score :(\nI'm not sure why", ctx);
-              }
-            }
-          } else {
-            ctx.reply(`🚨🚨🚨 CHEATER 🚨🚨🚨\nSomething is wrong with your wordle score <a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name} the CHEATER</a>!`, {
-              reply_parameters: {
-                message_id: ctx.message!.message_id,
-              },
-              message_thread_id: ctx.message?.message_thread_id,
-              parse_mode: "HTML",
-            });
-          }
-        } else {
-          ctx.reply(`This is not today's score <a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name} the CHEATER</a>. Don't try to fool me!`, {
-            reply_parameters: {
-              message_id: ctx.message!.message_id,
-            },
-            message_thread_id: ctx.message?.message_thread_id,
-            parse_mode: "HTML",
-          });
-        }
-      } else {
-        ctx.reply(`I'm sorry, I don't know who you are. I'm not sure what you want me to do.`, { message_thread_id: ctx.message?.message_thread_id });
       }
     });
   }
@@ -219,7 +167,7 @@ export class WordleBot {
       });
     });
   }
-  
+
   private registerSpankReactions() {
     this.bot.reaction("👏", async ctx => {
       const spank = this.spankRequests.init.find(element => element.message_id === ctx.update.message_reaction.message_id);
@@ -236,44 +184,40 @@ export class WordleBot {
     });
   }
 
-  private initScheduledMessages() {
-    const that = this;
-    const daily = scheduleJob('0 9 * * *', async function() {
-      const rounds = await that.sheet.getActiveRounds(false);
-      for (const round of rounds) {
-        // TODO: have a special message on the first day of the round
-        await that.bot.api.sendMessage(round.title.split('|')[1], "One more day down! Don't forget to submit today's score.\nFeel free to use the /scorecard command to check the current standings.", { message_thread_id: round.threadId });
-      }
-    }.bind(this));
-    const complete = scheduleJob('0 11 * * *', async function() {
-      const rounds = await that.sheet.getActiveRounds(true);
-      for (const round of rounds) {
-        await that.bot.api.sendMessage(round.title.split('|')[1], "The round is complete! Lets see who won!", { message_thread_id: round.threadId });
-        await that.bot.api.sendMessage(round.title.split('|')[1], await that.getFinalTabulation(round.title), { message_thread_id: round.threadId });
-      }
-    })
-  }
-
   /** CONVERSATION DIALOGUE  */
+
+  private async newDayDialogue(round: RoundMetadata) {
+    const score = await this.data.getScorecard(round.id);
+    await this.bot.api.sendMessage(
+      round.id.split('|')[1],
+      [
+        `One more day down! You have ${score.metadata.holes - score.metadata.completedHoles} days remaining!`,
+        `Don't forget to submit today's score if you want to win!`,
+        ``,
+        `Feel free to use the /scorecard command to check the current standings.`,
+      ].join('\n'),
+      { message_thread_id: round.threadId, parse_mode: 'HTML' }
+    );
+  }
 
   private async newRoundDialogue(conversation: MyConversation, ctx: MyContext) {
     if (await this.verifyRoundInitiationDialogue(conversation, ctx)) {
       await this.replyAll("Let's get this round started!", ctx);
       const roundParameters = await this.gatherRoundParametersDialogue(conversation, ctx);
       if (roundParameters) {
-        const todayInfo = await this.getTodaysWordle();
+        const todayInfo = await getTodaysWordle();
 
-        const game: WordleGameConfig = {
+        const game: GameConfig = {
           id: this.getGroupId(ctx),
           chatId: ctx.message?.chat.id,
           threadId: ctx.message?.message_thread_id,
-          rounds: roundParameters.rounds,
+          holes: roundParameters.holes,
           mulligans: roundParameters.mulligans,
-          initiationDate: todayInfo.date,
-          initialGameNumber: todayInfo.gameNumber,
+          initiationDate: todayInfo.print_date,
+          initialGameNumber: todayInfo.days_since_launch,
         };
-        await this.sheet.newGame(game);
-        this.replyAll(START_NEW_ROUND, ctx);
+        await this.data.newGame(game);
+        this.replyAll(START_NEW_ROUND, ctx);    // todo parameterize number of days
       }
     }
   }
@@ -284,6 +228,7 @@ export class WordleBot {
     await ctx.reply(`<a href="tg://user?id=${ctx.from?.id}">${ctx.from?.first_name}</a> has requested to start a new round of Wordle Golf. Would someone confirm? (yes/no)\n\n🚨This will reset any existing round!`, {
       message_thread_id: ctx.message?.message_thread_id,
       parse_mode: "HTML",
+      reply_markup: { force_reply: true },
     });
     const { message } = await conversation.wait();
     const respondor = message?.from;
@@ -304,15 +249,15 @@ export class WordleBot {
 
   private async gatherRoundParametersDialogue(conversation: MyConversation, ctx: MyContext) {
     try {
-      await this.replyAll("How many rounds (days) would you like to play?", ctx);
-      const rounds = await this.getNumberDialogue(conversation, ctx);
+      await this.replyAll("How many holes (days) would you like to play?", ctx);
+      const holes = await this.getNumberDialogue(conversation, ctx);
       await this.replyAll("How many mulligans (skip days) would you like to include?", ctx);
       const mulligans = await this.getNumberDialogue(conversation, ctx);
-      if (mulligans > rounds) {
+      if (mulligans > holes) {
         await this.replyAll("I'm sorry, you can't have more mulligans than rounds. goodbye.", ctx);
         return;
       }
-      return { rounds, mulligans };
+      return { holes, mulligans };
     } catch (err) {
       console.log(err);
       return;
@@ -355,14 +300,42 @@ export class WordleBot {
 
   /** GENERAL HELPERS */
 
-  // TODO
-    // parse and validate
-  private parseWordleScore(message: string, user: User): WordleScore {
+  private async initScheduledMessages() {
+    const that = this;
+
+    const complete = scheduleJob('0 9 * * *', async function() {
+      const rounds = await that.data.getActiveRounds();
+      for (const round of rounds) {
+        if (round.isComplete) {
+          that.finalizeGame(round);
+        } else {
+          that.newDayDialogue(round);
+        }
+      }
+    });
+  }
+
+  private async finalizeGame(round: RoundMetadata) {
+    const score = await this.data.finalizeRound(round.id);
+    await this.bot.api.sendMessage(
+      round.id.split('|')[1],
+      "The round is complete! Lets see who won!",
+      { message_thread_id: round.threadId },
+    );
+    await this.bot.api.sendMessage(
+      round.id.split('|')[1],
+      await this.getFinalScorecardMessage(score),
+      { message_thread_id: round.threadId, parse_mode: 'HTML' },
+    );
+  }
+
+  private parseWordleScore(message: string, user: User, ctx: MyContext): WordleScore {
     const lines = message.split("\n");
     const title = lines[0].split(" ");
 
     const score = {
       playerId: this.getPlayerId(user),
+      gameId: this.getGroupId(ctx),
       userId: user.id,
       username: user.username,
       userFirstName: user.first_name,
@@ -381,52 +354,6 @@ export class WordleBot {
     }
 
     return score;
-  }
-
-  // private parseWordleScoreArchive(message: string, user: User): WordleScore {
-  //   const lines = message.split("\n");
-  //   const title = lines[0].split(" ");
-
-  //   console.log(message);
-
-  //   // todo: parse date off message.date epoch and then use that against wordle api to retreive game number
-
-  //   return {
-  //     playerId: this.getPlayerId(user),
-  //     userId: user.id,
-  //     username: user.username,
-  //     userFirstName: user.first_name,
-  //     initialWord: title[0],
-  //     gameId: {
-  //       label: title[1],
-  //       value: parseInt(title[1].split(",").join("")),
-  //     },
-  //     score: {
-  //       label: title[2],
-  //       // display: title[2].split('/')[0],
-  //       value: title[2].split('/')[0] === 'X' ? 6.5 : parseInt(title[2].split('/')[0]),
-  //     },
-  //     lines: lines,
-  //   };
-  // }
-
-  private async getTodaysWordle() {
-    const today = format(new Date(new Date().toLocaleString("en-US", {timeZone: "America/New_York"})), "yyyy-MM-dd");
-    const todaysWordle = await (await fetch(`https://www.nytimes.com/svc/wordle/v2/${today}.json`)).json();
-
-    return {
-      date: today,
-      gameNumber: todaysWordle.days_since_launch
-    };
-  }
-
-  private async isTodaysWordle(wordle: WordleScore) {
-    const today = format(new Date(new Date().toLocaleString("en-US", {timeZone: "America/New_York"})), "yyyy-MM-dd");
-    const todaysWordle = await (await fetch(`https://www.nytimes.com/svc/wordle/v2/${today}.json`)).json();
-
-    console.log(todaysWordle);
-
-    return todaysWordle.days_since_launch === wordle.gameId.value;
   }
 
   private validateWordleScore(wordle: WordleScore) {
@@ -455,66 +382,71 @@ export class WordleBot {
       return false
     }
 
+    // TODO: check that a later wordle hasn't been played
+
     return true;
   }
 
-  private async getReport(groupId: string) {
-    try {
-      const round = await this.sheet.getScoringReport(groupId);
+  private getScorecardMessage(scorecard: RoundScorecard) {
+    const sorted = Object.keys(scorecard.scores).sort((a, b) => scorecard.scores[a].total - scorecard.scores[b].total);
 
-      let replyString = "Current Round:\n-----\n";
-      replyString += `Started on ${format(round.startDate, 'M/d/yy')}\n${round.days} days completed`;
-      replyString += "\n-----\nScores:\n\n";
-      for (const player in round.scores) {
-        const playerInfo = this.parsePlayerId(player);
-        replyString += `${playerInfo.firstName}: ${round.scores[player].total}\n    ${round.scores[player].holes.join(" ")}\n`;
-      }
-      replyString += "-----\nScores may be adjusted for penalties on conclusion of the round.\nThanks for playing!";
+    const htmlString = [];
+    htmlString.push(`<b>Current Round</b>`);
+    htmlString.push(`-----`);
+    // htmlString.push(`Started on ${scorecard.metadata.initiationDate}`);  // TODO: initiation date is broken
+    htmlString.push(`${scorecard.metadata.completedHoles} days completed`);
+    htmlString.push(`${scorecard.metadata.holes - scorecard.metadata.completedHoles} days remaining`);
+    htmlString.push(`-----`);
 
-      return replyString;
-    } catch (err: any) {
-      if (err.message === "SHEET_NOT_FOUND") {
-        return "There is no active round right now.\nStart a new round with the /wordle command!";
-      } else {
-        console.log(err);
-        return "I'm having trouble retrieving the current scores. Maybe I need to be punished?";
-      }
-    }
+    htmlString.push(`Scores:`);
+    htmlString.push(``);
+    htmlString.push(...this.getResults(scorecard));
+
+    htmlString.push(`-----`);
+    htmlString.push(`Mulligans will be accounted for at the end of the round.`);
+    htmlString.push(`Thanks for playing!`);
+
+    return htmlString.join('\n');
   }
 
-  private async getFinalTabulation(groupId: string) {
-    try {
-      const round = await this.sheet.tabulateFinalResults(groupId);
-      const getWinnerLines = () => {
-        if (round.tie) {
-          return `We have ${round.winners.length} winners: ${round.winners.map(p => this.parsePlayerId(p).firstName).join(", ")}!!\n\n🎉🎉CONGRATULATIONS🎉🎉\n🍾🍾🍾🍾🍾`
-        } else {
-          return `We have a winner: ${this.parsePlayerId(round.winners[0]).firstName}!!\n\n🎊🎊CONGRATULATIONS🎊🎊\n🍾🍾🍾🍾🍾`
-        }
-      }
-  
-      const reply =
-`Round Results:
------
-${getWinnerLines()}
-With a score of ${round.winningScore} they are clearly the smartest!!
------
-This round was started on ${format(round.startDate, 'M/d/yy')}
------
-Here are the final scores:
+  // TODO: fix parsing of user based on datasource formatting
+  private async getFinalScorecardMessage(scorecard: RoundScorecard) {
+    const sorted = Object.keys(scorecard.scores).sort((a, b) => scorecard.scores[a].total - scorecard.scores[b].total);
+    const winners = sorted.filter(user => scorecard.scores[user].total === scorecard.scores[sorted[0]].total);
 
-${round.scores.map(p => `${this.parsePlayerId(p[0]).firstName}: ${p[1].total}\n    ${p[1].holes.join(" ")}`).join("\n")}
------
-Thanks for playing! You can start a new round with the /wordle command!
-`;
-      return reply;
-    } catch (err: any) {
-      if (err.message === 'ROUND_NOT_FINISHED') {
-        return "The round hasn't finished yet. Wait till later!";
-      } else {
-        throw err;
-      }
+    const htmlString = [];
+    htmlString.push(`<b>Round Complete</b>`);
+    htmlString.push(`-----`);
+
+    htmlString.push(`🏆🏆🏆🏆🏆`);
+    if (winners.length > 1) {
+      const winnersFormatted = winners.map(winner => `<a href="tg://user?id=${winner.split('|')[0]}">${winner.split('|')[1]}</a>`);
+      htmlString.push(winnersFormatted.join(" and ") + " win!");
+    } else {
+      htmlString.push(`<a href="tg://user?id=${winners[0].split('|')[0]}">${winners[0].split('|')[1]}</a> wins!`);
+      htmlString.push()
     }
+    htmlString.push(`🏆🏆🏆🏆🏆`);
+
+    htmlString.push(`-----`);
+    htmlString.push(`Final results:`);
+    htmlString.push(``);
+
+    htmlString.push(...this.getResults(scorecard));
+
+    return htmlString.join('\n');
+  }
+
+  private getResults(scorecard: RoundScorecard) {
+    const results = [];
+    const sorted = Object.keys(scorecard.scores).sort((a, b) => scorecard.scores[a].total - scorecard.scores[b].total);
+
+    for (const player of sorted) {
+      results.push(`<a href="tg://user?id=${player.split('|')[0]}">${player.split('|')[1]}</a>: <code>${scorecard.scores[player].total}</code>`);
+      results.push(`   <code>${scorecard.scores[player].holes.visual.join(" ")}</code>`);
+    }
+
+    return results;
   }
 
   private getGroupId(ctx: any) {
@@ -542,6 +474,8 @@ Thanks for playing! You can start a new round with the /wordle command!
   private getPlayerId(user: User) {
     return user.id + "|" + user.first_name;
   }
+
+  // TODO: this should be used in sheets with a real data interface
   private parsePlayerId(playerId: string) {
     const [userId, ...firstNameArr] = playerId.split("|");
     const firstName = firstNameArr.join("|");
@@ -550,6 +484,10 @@ Thanks for playing! You can start a new round with the /wordle command!
 
   private replyAll(message: string, ctx: MyContext) {
     return ctx.reply(message, { message_thread_id: ctx.message?.message_thread_id });
+  }
+
+  private replyAllHtml(message: string, ctx: MyContext) {
+    return ctx.reply(message, { message_thread_id: ctx.message?.message_thread_id, parse_mode: 'HTML' });
   }
 
   private replyOne(message: string, ctx: MyContext) {

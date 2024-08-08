@@ -40,6 +40,7 @@ You need a Google Sheet Document configured to use as the scoring database. Each
 ### Google Sheets Authentication
 
 Authentication methods supported are `adc` (application default credentials) or `oauth2`.
+TODO: service_account
 
 #### Application Default Crednetials
 

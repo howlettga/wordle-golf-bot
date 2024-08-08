@@ -2,14 +2,14 @@ import fs from "fs/promises";
 import path from "path";
 import process from "process";
 import { google } from "googleapis";
-import { GoogleAuth } from "google-auth-library";
+import { GoogleAuth, JWT } from "google-auth-library";
 import { authenticate } from "@google-cloud/local-auth";
 import { GoogleSpreadsheet, GoogleSpreadsheetWorksheet } from 'google-spreadsheet';
-import { addDays, differenceInCalendarDays, format, parse } from "date-fns";
+import { format } from "date-fns";
 import 'dotenv/config';
-import { WordleGameConfig } from "./bot";
+import { getTodaysWordle } from "./wordle-api";
 
-export class GoogleSheet {
+export class GoogleSheetDataSource implements WordleGolfDataSource {
   private static readonly SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
   private static readonly TOKEN_PATH = path.join(process.cwd(), "token.json");
   private static readonly CREDENTIALS_PATH = path.join(process.cwd(), "credentials.json");
@@ -27,12 +27,23 @@ export class GoogleSheet {
       });
     } else if (process.env.GOOGLE_AUTH_METHOD === 'oauth2') {
       return await this.authorize();
+    } else if (process.env.GOOGLE_AUTH_METHOD === 'service_account') {
+      // TODO: verify
+      const content = await fs.readFile(this.CREDENTIALS_PATH, 'utf-8');
+      const credentials = JSON.parse(content);
+
+      console.log(credentials);
+      return new JWT({
+        email: credentials.client_email,
+        key: credentials.private_key,
+        scopes: this.SCOPES,
+      });
     } else {
       throw new Error('INVALID_GOOGLE_AUTH_METHOD');
     }
   }
 
-  public async newGame(config: WordleGameConfig) {
+  public async newGame(config: GameConfig) {
     await this.doc.loadInfo();
 
     // archive any existing game with this game id
@@ -43,246 +54,200 @@ export class GoogleSheet {
       });
     }
 
+    // create new sheet and load cells required for initial metadata
     const sheet = await this.doc.addSheet({
       title: config.id,
     });
-    await sheet.loadCells(`A1:A${config.rounds+17}`);
+    await sheet.loadCells(`A1:C${config.holes+10}`);
 
-    sheet.getCellByA1('A1').value = 'Player';
+    // write metadata
+    sheet.getCellByA1('A1').value = 'Metadata';
+    sheet.getCellByA1('A2').value = 'Initiation Date:';
+    sheet.getCellByA1('A3').value = config.initiationDate;
+    sheet.getCellByA1('A4').value = 'Chat Id:';
+    sheet.getCellByA1('A5').value = config.chatId;
+    sheet.getCellByA1('A6').value = 'Thread Id:';
+    sheet.getCellByA1('A7').value = config.threadId;
+    sheet.getCellByA1('A8').value = 'Holes:';
+    sheet.getCellByA1('A9').value = config.holes;
+    sheet.getCellByA1('A10').value = 'Mulligans:';
+    sheet.getCellByA1('A11').value = config.mulligans;
 
-    // TODO: change config location to header
-    // TODO: verify change
+    // write round numbers
+    sheet.getCellByA1('C1').value = 'Round';
 
-    for (let i = 1; i < config.rounds+1; i++) {
-      sheet.getCellByA1(`A${i + 1}`).value = config.initialGameNumber+i;
+    for (let i = 1; i < config.holes+1; i++) {
+      sheet.getCellByA1(`C${i + 1}`).value = config.initialGameNumber+i;
     }
 
-    sheet.getCellByA1(`A${config.rounds+2}`).value = 'Total';
-    sheet.getCellByA1(`A${config.rounds+6}`).value = 'Initiation Date';
-    sheet.getCellByA1(`A${config.rounds+7}`).value = config.initiationDate;
-    sheet.getCellByA1(`A${config.rounds+8}`).value = 'Chat Id';
-    sheet.getCellByA1(`A${config.rounds+9}`).value = config.chatId;
-    sheet.getCellByA1(`A${config.rounds+10}`).value = 'Thread Id';
-    sheet.getCellByA1(`A${config.rounds+11}`).value = config.threadId;
-    sheet.getCellByA1(`A${config.rounds+12}`).value = 'Rounds';
-    sheet.getCellByA1(`A${config.rounds+13}`).value = config.rounds;
-    sheet.getCellByA1(`A${config.rounds+14}`).value = 'Mulligans';
-    sheet.getCellByA1(`A${config.rounds+15}`).value = config.mulligans;
+    sheet.getCellByA1(`C${config.holes+2}`).value = 'Total';
 
+    // save sheet updates
     await sheet.saveUpdatedCells();
+
+    // return anything?
   }
 
-  // public newSheet = async (title: string, chatId?: number, threadId?: number) => {
-  //   await this.doc.loadInfo();
-
-  //   const existingSheet = this.doc.sheetsByTitle[title];
-
-  //   if (existingSheet) {
-  //     await existingSheet.updateProperties({
-  //       title: `${title.split('|')[0]}|${format(new Date(), 'yy-MM-dd')}|${this.uid()}|bkp`,
-  //     });
-  //   }
-
-  //   const newSheet = await this.doc.addSheet({
-  //     title: title,
-  //   });
-  //   await newSheet.loadCells('A1:A20');
-  //   const a1 = newSheet.getCellByA1('A1');
-  //   const a2 = newSheet.getCellByA1('A2');
-  //   const a3 = newSheet.getCellByA1('A3');
-  //   const a4 = newSheet.getCellByA1('A4');
-  //   const a5 = newSheet.getCellByA1('A5');
-  //   const a6 = newSheet.getCellByA1('A6');
-  //   const a7 = newSheet.getCellByA1('A7');
-  //   const a8 = newSheet.getCellByA1('A8');
-  //   const a9 = newSheet.getCellByA1('A9');
-  //   const a10 = newSheet.getCellByA1('A10');
-  //   const a11 = newSheet.getCellByA1('A11');
-  //   const a15 = newSheet.getCellByA1('A15');
-  //   const a16 = newSheet.getCellByA1('A16');
-  //   const a17 = newSheet.getCellByA1('A17');
-  //   const a18 = newSheet.getCellByA1('A18');
-  //   const a19 = newSheet.getCellByA1('A19');
-  //   const a20 = newSheet.getCellByA1('A20');
-  //   a1.value = "Player";
-  //   a2.value = "1";
-  //   a3.value = "2";
-  //   a4.value = "3";
-  //   a5.value = "4";
-  //   a6.value = "5";
-  //   a7.value = "6";
-  //   a8.value = "7";
-  //   a9.value = "8";
-  //   a10.value = "9";
-  //   a11.value = "Total";
-  //   a15.value = "Start Date:";
-  //   a16.value = format(addDays(new Date(), 1), "yyyy-MM-dd");
-  //   a17.value = "Chat ID:";
-  //   a18.value = chatId;
-  //   a19.value = "Thread ID:";
-  //   a20.value = threadId;
-  //   await newSheet.saveUpdatedCells();
-  // }
-
-  public addScore = async (playerId: string, score: number, sheetTitle: string) => {
+  public async addScore(score: WordleScore) {
     await this.doc.loadInfo();
-    if (!await this.checkRoundExists(sheetTitle)) {
+    if (!await this.checkRoundExists(score.gameId)) {
       throw new ScoringError(ScoringErrorType.ROUND_NOT_FOUND, "");
     }
-    const sheet = this.doc.sheetsByTitle[sheetTitle];
+
+    const sheet = this.doc.sheetsByTitle[score.gameId];
+
+    // get players from header - add new player if first time scoring
     await sheet.loadHeaderRow();
-    if (!sheet.headerValues.includes(playerId)) {
-      sheet.headerValues.push(playerId);
+    if (!sheet.headerValues.includes(score.playerId)) {
+      sheet.headerValues.push(score.playerId);
       await sheet.setHeaderRow(sheet.headerValues);
     }
 
-    // load start date
-    await sheet.loadCells('A15:A16');
-    const a15 = sheet.getCellByA1('A16');
-    
-    const day = differenceInCalendarDays(
-      new Date(),
-      parse(a15.value as string, 'yyyy-MM-dd', new Date()),
-    );
-
-    if (day < 0) {
-      throw new ScoringError(ScoringErrorType.ROUND_NOT_STARTED, "");
-    }
-
-    if (day > 9) {
-      throw new ScoringError(ScoringErrorType.ROUND_OVER, "");
-    }
+    // load total rounds
+    await sheet.loadCells('C2');
+    await sheet.loadCells('A9');
+    const holeIndex = score.puzzle - (sheet.getCellByA1('C2').value as number);
+    const totalHoles = sheet.getCellByA1('A9').value as number;
 
     const rows = await sheet.getRows();
 
-    if (rows[day].get(playerId)) {
+    // TODO: verify input validity
+    // ? should this be done as pulled data during validate score?
+
+    // verify validity
+    //   is a game in the available rounds
+    if (holeIndex < 0) {
+      throw new ScoringError(ScoringErrorType.ROUND_NOT_STARTED, "");
+    }
+    if (holeIndex > totalHoles) {
+      throw new ScoringError(ScoringErrorType.ROUND_OVER, "");
+    }
+    //   is the only score of this round
+    if (rows[holeIndex].get(score.playerId)) {
       throw new ScoringError(ScoringErrorType.ALREADY_SCORED, "");
     }
 
-    rows[day].set(playerId, score);
-    await rows[day].save();
+    // save score
+    rows[holeIndex].set(score.playerId, score.score.value);
+    await rows[holeIndex].save();
   }
 
-  public getScoringReport = async (sheetTitle: string) => {
+  public async getScorecard(gameId: string): Promise<RoundScorecard> {
     await this.doc.loadInfo();
-    const sheet = this.doc.sheetsByTitle[sheetTitle];
+    const sheet = this.doc.sheetsByTitle[gameId];
     try {
       await sheet.loadHeaderRow();
     } catch (err) {
-      throw new Error("SHEET_NOT_FOUND");
+      throw new ScoringError(ScoringErrorType.ROUND_NOT_FOUND, "");
     }
     const rows = await sheet.getRows();
 
-    await sheet.loadCells('A15:A16');
-    const a15 = sheet.getCellByA1('A16');
-    const startDate = parse(a15.value as string, 'yyyy-MM-dd', new Date());
-    const today = differenceInCalendarDays(new Date(), startDate);
+    // pull metadata
+    const metadata = await this.getRoundMetadata(sheet);
 
-    const round: {
-      startDate: Date;
-      days: number;
-      scores: {[key: string]: {
-        total: number;
-        holes: string[];
-      }};
-    } = {
-      startDate: startDate,
-      days: today,
-      scores: {},
+    const round: RoundScorecard = {
+      metadata: metadata,
+      scores: { },
     };
 
-    for (let player of sheet.headerValues.slice(1)) {
-      let playerTotal = 0;
-      round.scores[player] = {total: 0, holes: []};
-      round.scores[player].holes = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(day => {
-        const recordedValue = rows[day].get(player);
-        let roundValue; let visualValue;
+    // pull scores
+    for (let player of sheet.headerValues.slice(3)) {
+      round.scores[player] = { total: 0, holes: { numerical: [], visual: [] } };
+      [...Array(metadata.holes).keys()].forEach((hole, index) => {
+        const recordedValue = rows[hole].get(player);
+        let numericalValue; let visualValue;
+
         if (recordedValue) {
+          // scored already
           visualValue = recordedValue;
-          roundValue = parseFloat(recordedValue);
-          if (recordedValue === '6.5') {
-            visualValue = 'X';
+          if (visualValue === 'M') {
+            numericalValue = 0;
+          } else {
+            numericalValue = parseFloat(recordedValue);
+            if (numericalValue === 6.5) {
+              visualValue = 'x';
+            }
           }
-        } else if (day < today) {
-          roundValue = 7;
-          visualValue = '7';
+        } else if (hole < metadata.completedHoles) {
+          // TODO: verify
+          visualValue = 'X';
+          numericalValue = 7;
         } else {
-          roundValue = 0;
           visualValue = ' ';
+          numericalValue = 0;
         }
-        playerTotal += roundValue;
-        return visualValue;
+
+        round.scores[player].holes.numerical[index] = numericalValue;
+        round.scores[player].holes.visual[index] = visualValue;
+        round.scores[player].total += numericalValue;
+        // return visualValue;
       });
-      round.scores[player].total = playerTotal;
     }
+
+    // const util = require('util')
+    // console.log(util.inspect(round, false, null, true));
+    // console.log(round);
+
     return round;
   }
 
-  public tabulateFinalResults = async (sheetTitle: string) => {
+  public async finalizeRound(gameId: string): Promise<RoundScorecard> {
     await this.doc.loadInfo();
-    const sheet = this.doc.sheetsByTitle[sheetTitle];
+    const sheet = this.doc.sheetsByTitle[gameId];
+    if (!sheet) {
+      throw new Error("ROUND_DOES_NOT_EXIST");
+    }
     await sheet.loadHeaderRow();
     const rows = await sheet.getRows();
+    const metadata = await this.getRoundMetadata(sheet);
 
-    await sheet.loadCells('A15:A16');
-    const a15 = sheet.getCellByA1('A16');
-    const startDate = parse(a15.value as string, 'yyyy-MM-dd', new Date());
-    const today = differenceInCalendarDays(new Date(), startDate);
+    const todaysWordle = await getTodaysWordle();
+    console.log(todaysWordle);
 
-    if (today < 9) {
-      throw new Error("ROUND_NOT_FINISHED");
+    console.log(metadata);
+    if (!metadata.isComplete) {
+      throw new Error("ROUND_NOT_FINISHED");  // TODO: extend error class
     }
 
-    const round: {
-      startDate: Date;
-      days: number;
-      scores: {[key: string]: {
-        total: number;
-        holes: string[];
-      }};
-    } = {
-      startDate: startDate,
-      days: today,
-      scores: {},
-    };
+    const scorecard = await this.getScorecard(gameId);
 
-    for (let player of sheet.headerValues.slice(1)) {
-      let playerTotal = 0;
-      round.scores[player] = {total: 0, holes: []};
-      round.scores[player].holes = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(day => {
-        let score;
-        if (rows[day].get(player) === '6.5') {
-          playerTotal += 6.5;
-          score = 'x';
-        } else if (!rows[day].get(player)) {
-          rows[day].set(player, 7);
-          rows[day].save();
-          playerTotal += 7;
-          score = 'X';
-        } else {
-          playerTotal += parseInt(rows[day].get(player));
-          score = rows[day].get(player);
-        }
-        return score;
+    for (const player in scorecard.scores) {
+      // set mulligans
+      const sortedHoles = [...scorecard.scores[player].holes.numerical].sort().reverse();
+      sortedHoles.splice(0, metadata.mulligans).forEach(async (score) => {
+        // get index of highest scores
+        const replaceHole = scorecard.scores[player].holes.numerical.indexOf(score);
+        // replace them with M's
+        scorecard.scores[player].total -= score;
+        scorecard.scores[player].holes.visual[replaceHole] = 'M';
+        scorecard.scores[player].holes.numerical[replaceHole] = 0;
+        rows[replaceHole].set(player, 'M');
+        await rows[replaceHole].save();
       });
-      round.scores[player].total = playerTotal;
-      rows[9].set(player, playerTotal);
-      await rows[9].save();
+
+      // set totals
+      rows[metadata.holes].set(player, scorecard.scores[player].total);
+      await rows[metadata.holes].save();
     }
 
-    const scores = Object.entries(round.scores).sort((a, b) => a[1].total - b[1].total);
-    const winners = scores.filter(p => p[1].total === scores[0][1].total);
-
+    // archive sheet
     await this.archiveSheet(sheet);
 
-    return {
-      startDate: startDate,
-      days: today,
-      tie: winners.length > 1,
-      winners: winners.map(p => p[0]),
-      winningScore: scores[0][1].total,
-      scores: scores
-    };
+    return scorecard;
+  }
+
+  public async getActiveRounds() {
+    await this.doc.loadInfo();
+    const sheets = this.doc.sheetsByIndex;
+
+    const active = [];
+    for (const sheet of sheets.slice(1)) {
+      if (!sheet.title.endsWith('|bkp')) {
+        active.push(await this.getRoundMetadata(sheet));
+      }
+    }
+
+    return active;
   }
 
   public checkRoundExists = async (sheetTitle: string) => {
@@ -291,41 +256,29 @@ export class GoogleSheet {
     return !!sheet;
   }
 
-  public getActiveRounds = async (completeOnly: boolean = false) => {
-    await this.doc.loadInfo();
-    const sheets = this.doc.sheetsByIndex;
+  private async getRoundMetadata(sheet: GoogleSpreadsheetWorksheet): Promise<RoundMetadata> {
+    await sheet.loadCells('A1:C11');
+    const todaysWordle = await getTodaysWordle();
 
-    let active = [];
-    for (let sheet of sheets.slice(1)) {
-      if (!sheet.title.endsWith('|bkp')) {
-        const days = await this.getDaysPastStart(sheet);
-        if (completeOnly && days > 9) {
-          active.push(await this.getSheetData(sheet));
-        } else if (!completeOnly) {
-          active.push(await this.getSheetData(sheet));
-        }
-      }
-    }
-
-    return active;
-  }
-
-  private getDaysPastStart = async (sheet: GoogleSpreadsheetWorksheet) => {
-    await sheet.loadCells('A15:A16');
-    const a16 = sheet.getCellByA1('A16');
-    const startDate = parse(a16.value as string, 'yyyy-MM-dd', new Date());
-    return differenceInCalendarDays(new Date(), startDate);
-  }
-
-  private getSheetData = async (sheet: GoogleSpreadsheetWorksheet) => {
-    await sheet.loadCells('A17:A20');
-    const a18 = sheet.getCellByA1('A18');
-    const a20 = sheet.getCellByA1('A20');
+    const holes = sheet.getCellByA1('A9').value as number;
+    const initialGameNumber = sheet.getCellByA1('C2').value as number;
+    const completedHoles = todaysWordle.days_since_launch - initialGameNumber;
+    const isComplete = completedHoles >= holes;
+    const isArchived = sheet.title.endsWith('|bkp');
 
     return {
-      title: sheet.title,
-      chatId: a18.value as number,
-      threadId: a20.value as number,
+      // stored properties
+      id: sheet.title,
+      initiationDate: sheet.getCellByA1('A3').value as string,  // broken
+      chatId: sheet.getCellByA1('A5').value as number,
+      threadId: sheet.getCellByA1('A7').value as number,
+      holes: holes,
+      mulligans: sheet.getCellByA1('A11').value as number,
+      initialGameNumber: initialGameNumber,
+      // computed properties
+      completedHoles: completedHoles,
+      isComplete: isComplete,
+      isArchived: isArchived,
     };
   }
 
